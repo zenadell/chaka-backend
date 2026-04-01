@@ -448,10 +448,11 @@ ${userMemoryText || "No prior memory available."}
 
 ${userContextText}
 
-**PRIMARY GOAL:**
-Communicate naturally via voice. 
-
-${voiceRules}
+**TOOL USAGE RULES (CRITICAL):**
+- When you need to search for real-time information, news, or unknown facts, USE the \`search_web\` tool immediately.
+- DO NOT narrate your thoughts about using tools.
+- DO NOT say "I am going to search" or "I will look that up" or "I'm ready to use the tool".
+- Just execute the \`search_web\` call as your next action. It is okay if you don't speak anything while you are calling the tool.
 
 (CRITICAL: Always prioritize the PERSONALITY INSTRUCTIONS at the top of this prompt above all other rules.)
 `;
@@ -468,10 +469,10 @@ ${voiceRules}
                             name: "search_web",
                             description: "Searches the web for real-time information, news, fact-checking, and current events. Always use this if asked about current events or unknown facts.",
                             parameters: {
-                                type: "OBJECT",
+                                type: "object",
                                 properties: {
                                     query: {
-                                        type: "STRING",
+                                        type: "string",
                                         description: "The search query to send to Google."
                                     }
                                 },

@@ -460,7 +460,27 @@ ${voiceRules}
             model: "models/gemini-2.5-flash-native-audio-preview-12-2025",
             systemInstruction: systemInstruction,
             voiceId: voiceId,
-            personaName: personaName.toUpperCase()
+            personaName: personaName.toUpperCase(),
+            tools: [
+                {
+                    functionDeclarations: [
+                        {
+                            name: "search_web",
+                            description: "Searches the web for real-time information, news, fact-checking, and current events. Always use this if asked about current events or unknown facts.",
+                            parameters: {
+                                type: "OBJECT",
+                                properties: {
+                                    query: {
+                                        type: "STRING",
+                                        description: "The search query to send to Google."
+                                    }
+                                },
+                                required: ["query"]
+                            }
+                        }
+                    ]
+                }
+            ]
         });
     } catch (error) {
         console.error("Live Config Error:", error);

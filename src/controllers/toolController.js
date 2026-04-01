@@ -463,7 +463,7 @@ ${voiceRules}
             personaName: personaName.toUpperCase(),
             tools: [
                 {
-                    functionDeclarations: [
+                    function_declarations: [
                         {
                             name: "search_web",
                             description: "Searches the web for real-time information, news, fact-checking, and current events. Always use this if asked about current events or unknown facts.",

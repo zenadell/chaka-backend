@@ -21,6 +21,7 @@ router.post('/memory', verifyToken, toolController.handleUpdateMemory);
 router.post('/reflection', verifyToken, toolController.handleReflection);
 router.post('/email', verifyToken, toolController.handleEmail);
 router.post('/image-edit', verifyToken, toolController.handleImageEdit);
+router.post('/scrape-url', verifyToken, toolController.handleScrapeUrl);
 
 // ✅ NEW WHISPER ROUTE (Uses 'upload.single' middleware)
 router.post('/whisper', verifyToken, upload.single('audio'), toolController.handleWhisper);

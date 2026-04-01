@@ -1,5 +1,6 @@
 const apiKeyManager = require('../utils/apiKeyManager');
 const { searchWeb } = require('../services/searchService');
+const { tavilySearch, firecrawlScrape, performResearch } = require('../services/researchService');
 const { generateImage } = require('../services/imageService');
 const { generateSpeech, generateSpeechRaw } = require('../services/ttsService');
 const { getVideoTranscript } = require('../services/youtubeService');
@@ -15,27 +16,42 @@ const fs = require('fs');
 // --- SEARCH ---
 exports.handleSearch = async (req, res) => {
     const { query } = req.body;
+    if (!query) return res.status(400).json({ error: "Query is required" });
 
-    if (!query || query.trim() === '') {
-        return res.status(400).json({ error: "Query cannot be empty." });
-    }
-
-    const apiKey = apiKeyManager.keys.find(k => k.type === 'search')?.key;
-    if (!apiKey) {
-        console.error('❌ No search API key configured');
-        return res.status(503).json({ error: "Search service not configured. Please contact support." });
-    }
+    const searchKey = apiKeyManager.keys.find(k => k.type === 'search')?.key;
+    const tavilyKey = apiKeyManager.keys.find(k => k.type === 'tavily')?.key;
 
     try {
-        console.log(`🔍 Search request received for: "${query}"`);
-        const result = await searchWeb(query, apiKey);
-        console.log(`✅ Sending search results to client`);
+        let result;
+        if (tavilyKey) {
+            console.log(`🧠 Using Tavily for advanced search: "${query}"`);
+            result = await tavilySearch(query, tavilyKey);
+        } else if (searchKey) {
+            console.log(`🔍 Using Serper for standard search: "${query}"`);
+            result = await searchWeb(query, searchKey);
+        } else {
+            return res.status(503).json({ error: "No search service configured." });
+        }
         res.json({ result });
     } catch (error) {
-        console.error('❌ Search handler error:', error.message);
-        // Return a clear error message instead of generic message
-        const statusCode = error.message.includes('timeout') ? 408 : 500;
-        res.status(statusCode).json({ error: error.message });
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// --- DEEP SCRAPE (CAPTCHA Bypass) ---
+exports.handleScrapeUrl = async (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: "URL is required" });
+
+    const firecrawlKey = apiKeyManager.keys.find(k => k.type === 'firecrawl')?.key;
+    if (!firecrawlKey) return res.status(503).json({ error: "Firecrawl (Deep Scrape) not configured." });
+
+    try {
+        console.log(`🕷 Deep scraping: ${url}`);
+        const result = await firecrawlScrape(url, firecrawlKey);
+        res.json({ result });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 };
 
@@ -478,6 +494,20 @@ ${userContextText}
                                     }
                                 },
                                 required: ["query"]
+                            }
+                        },
+                        {
+                            name: "scrape_url",
+                            description: "Deeply scrapes a specific website URL to get its full content, especially useful for restricted sites that block standard bots.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    url: {
+                                        type: "string",
+                                        description: "The full URL of the website to scrape."
+                                    }
+                                },
+                                required: ["url"]
                             }
                         }
                     ]

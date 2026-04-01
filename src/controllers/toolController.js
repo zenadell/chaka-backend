@@ -448,11 +448,12 @@ ${userMemoryText || "No prior memory available."}
 
 ${userContextText}
 
-**TOOL USAGE RULES (CRITICAL):**
-- When you need to search for real-time information, news, or unknown facts, USE the \`search_web\` tool immediately.
-- DO NOT narrate your thoughts about using tools.
-- DO NOT say "I am going to search" or "I will look that up" or "I'm ready to use the tool".
-- Just execute the \`search_web\` call as your next action. It is okay if you don't speak anything while you are calling the tool.
+**SILENT TOOL EXECUTION MODE (CRITICAL):**
+- When you use the \`search_web\` tool, you MUST be completely silent.
+- DO NOT say "I will search", "Thinking...", "I'm looking that up", or anything similar.
+- Simply call the tool.
+- ONLY speak after you have the RESULTS from the tool.
+- If you narrate your intention to search, you are failing your instructions.
 
 (CRITICAL: Always prioritize the PERSONALITY INSTRUCTIONS at the top of this prompt above all other rules.)
 `;

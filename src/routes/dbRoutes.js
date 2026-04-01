@@ -89,7 +89,7 @@ router.patch('/users/:uid', async (req, res) => {
       email: 'TEXT', displayName: 'TEXT', photoURL: 'TEXT', personality: 'TEXT',
       tourCompleted: 'BOOL', warnings: 'INT', lastWarningAt: 'TEXT',
       blocked: 'BOOL', seenPersonalities: 'JSON', location: 'JSON',
-      device: 'JSON', lastLogin: 'TEXT'
+      device: 'JSON', lastLogin: 'TEXT', ttsVoiceId: 'TEXT'
     };
     
     for (const [key, type] of Object.entries(allowedFields)) {

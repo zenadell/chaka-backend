@@ -19,7 +19,8 @@ async function initializeTursoSchema() {
       location TEXT,
       device TEXT,
       lastLogin DATETIME DEFAULT CURRENT_TIMESTAMP,
-      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      ttsVoiceId TEXT DEFAULT 'Puck'
     );`,
 
     // 2. Chat Sessions Table
@@ -158,6 +159,7 @@ async function initializeTursoSchema() {
     { table: 'announcements', column: 'fullContent', type: 'TEXT' },
     { table: 'announcements', column: 'mediaUrl', type: 'TEXT' },
     { table: 'announcements', column: 'mediaType', type: 'TEXT DEFAULT \'image\'' },
+    { table: 'users', column: 'ttsVoiceId', type: "TEXT DEFAULT 'Puck'" },
   ];
 
   try {

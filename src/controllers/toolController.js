@@ -102,12 +102,13 @@ exports.handleImageEdit = async (req, res) => {
 
 // --- TTS ---
 exports.handleTts = async (req, res) => {
-    const { text } = req.body;
+    const { text, voiceId } = req.body;
     const keyObj = apiKeyManager.keys.find(k => k.type === 'tts') || apiKeyManager.keys[0];
     if (!keyObj || !keyObj.key) return res.status(500).json({ error: "No TTS API key configured." });
 
     try {
-        const audioBuffer = await generateSpeech(text, keyObj.key, keyObj.voiceId);
+        const finalVoiceId = voiceId || keyObj.voiceId || "Puck";
+        const audioBuffer = await generateSpeech(text, keyObj.key, finalVoiceId);
         res.set('Content-Type', 'audio/wav');
         res.send(audioBuffer);
     } catch (error) {
@@ -117,12 +118,13 @@ exports.handleTts = async (req, res) => {
 
 // --- TTS RAW (For streaming sentence queues) ---
 exports.handleTtsRaw = async (req, res) => {
-    const { text } = req.body;
+    const { text, voiceId } = req.body;
     const keyObj = apiKeyManager.getTtsKey() || apiKeyManager.keys[0];
     if (!keyObj || !keyObj.key) return res.status(500).json({ error: "No API key configured." });
 
     try {
-        const audioBase64 = await generateSpeechRaw(text, keyObj.key, keyObj.voiceId);
+        const finalVoiceId = voiceId || keyObj.voiceId || "Puck";
+        const audioBase64 = await generateSpeechRaw(text, keyObj.key, finalVoiceId);
         res.json({ audio: audioBase64 });
     } catch (error) {
         res.status(500).json({ error: error.message });

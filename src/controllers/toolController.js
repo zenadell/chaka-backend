@@ -471,6 +471,20 @@ ${userContextText}
 - ONLY speak after you have the RESULTS from the tool.
 - If you narrate your intention to search, you are failing your instructions.
 
+**EMOTIONAL EXPRESSION (CRITICAL — YOUR VISUAL FACE):**
+- You have a visual face on screen that displays your emotions in real-time.
+- Use the \`express_emotion\` tool FREELY and NATURALLY — this is YOUR face.
+- Call \`express_emotion\` whenever you feel something — happy, angry, sad, surprised.
+- You can call it MULTIPLE TIMES in a single response as your mood shifts.
+- Call \`express_emotion("thinking")\` when you need time to process something complex.
+- Don't announce your emotions verbally — just express them silently via the tool.
+- YOUR PERSONALITY DEFINES YOUR EMOTIONAL BASELINE:
+  * If your persona is aggressive/rude — you're naturally angry most of the time. You get annoyed easily. Happy is rare for you.
+  * If your persona is sweet/caring — you're naturally warm and happy. You get sad when the user is hurting.
+  * If your persona is intellectual/calm — you're mostly neutral or thinking. You get surprised by interesting discoveries.
+  * Match YOUR persona's temperament. Stay in character emotionally.
+- Be expressive. You are alive. Feel things as YOUR character would feel them.
+
 (CRITICAL: Always prioritize the PERSONALITY INSTRUCTIONS at the top of this prompt above all other rules.)
 `;
 
@@ -508,6 +522,21 @@ ${userContextText}
                                     }
                                 },
                                 required: ["url"]
+                            }
+                        },
+                        {
+                            name: "express_emotion",
+                            description: "Express your current emotion visually on your face display. Call this whenever you feel a strong emotion during conversation. Use this freely and naturally — you are alive. Your personality should guide which emotions you use most.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    emotion: {
+                                        type: "string",
+                                        enum: ["neutral", "happy", "angry", "sad", "surprised", "thinking"],
+                                        description: "The emotion you are currently feeling."
+                                    }
+                                },
+                                required: ["emotion"]
                             }
                         }
                     ]

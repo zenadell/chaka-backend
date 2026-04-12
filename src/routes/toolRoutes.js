@@ -30,6 +30,9 @@ router.post('/database', verifyToken, toolController.handleDatabaseQuery);
 // ✅ LIVE STREAM MODE CONFIG
 router.get('/live/config', verifyToken, toolController.handleLiveConfig);
 
+// ✅ AI-POWERED EMOTION CLASSIFIER (for Live Mode visualizer)
+router.post('/classify-emotion', verifyToken, toolController.handleClassifyEmotion);
+
 // ✅ AUTO CHAT TITLE GENERATION
 router.post('/generate-title', async (req, res) => {
   const { userMessage, botResponse } = req.body;

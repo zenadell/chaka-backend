@@ -527,3 +527,43 @@ ${userContextText}
         res.status(500).json({ error: error.message });
     }
 };
+
+// --- EMOTION CLASSIFIER (AI-Powered via Gemini Flash) ---
+exports.handleClassifyEmotion = async (req, res) => {
+    const { text } = req.body;
+    if (!text || text.length < 2) {
+        return res.json({ emotion: 'neutral' });
+    }
+
+    try {
+        const { VertexAI } = require('@google-cloud/vertexai');
+        const vertexAI = new VertexAI({ project: 'chakachaka-e672a', location: 'us-central1' });
+        const model = vertexAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+
+        const result = await model.generateContent({
+            contents: [{ role: 'user', parts: [{ text: `You are an emotion classifier. Read the following internal thought from an AI character and determine the single dominant emotion being expressed.
+
+You MUST reply with EXACTLY ONE of these words, nothing else: happy, sad, angry, surprised, thinking, neutral
+
+Text to classify:
+"${text.substring(0, 500)}"
+
+Your answer (one word only):` }] }],
+            generationConfig: {
+                maxOutputTokens: 5,
+                temperature: 0.0
+            }
+        });
+
+        const raw = result.response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toLowerCase();
+        const validEmotions = ['happy', 'sad', 'angry', 'surprised', 'thinking', 'neutral'];
+        const emotion = validEmotions.includes(raw) ? raw : 'neutral';
+        
+        console.log(`🎭 AI Emotion Classified: "${text.substring(0, 60)}..." → ${emotion}`);
+        res.json({ emotion });
+    } catch (error) {
+        console.error("Emotion classify error:", error.message);
+        // Fallback to neutral on any error
+        res.json({ emotion: 'neutral' });
+    }
+};

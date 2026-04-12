@@ -61,10 +61,17 @@ function handleLiveStreamUpgrade(request, socket, head) {
             if (googleWs.readyState === WebSocket.OPEN) {
                 googleWs.close(); // Close Gemini connection immediately to save tokens
             }
-        });
-
         googleWs.on('close', (code, reason) => {
             console.log(`🔴 Google Gemini closed connection (${code}): ${reason}`);
+
+            // If Google disconnected prematurely with an error (e.g., quota, unsupported config)
+            if (code === 1008 || code === 1011 || code > 4000) {
+                console.warn(`⚠️ Google rejected the Live stream with code ${code}. Auto-rotating API keys...`);
+                if (typeof apiKeyManager.rotateLiveProxyKeys === 'function') {
+                    apiKeyManager.rotateLiveProxyKeys();
+                }
+            }
+
             if (clientWs.readyState === WebSocket.OPEN) {
                 clientWs.close(code, reason.toString() || 'Gemini Closed');
             }

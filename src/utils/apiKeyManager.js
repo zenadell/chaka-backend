@@ -4,6 +4,8 @@ class ApiKeyManager {
   constructor() {
     this.keys = [];
     this.currentIndex = 0;
+    this.currentTtsIndex = 0;
+    this.currentLiveIndex = 0;
     this.usageTimestamps = new Map();
     this.initialized = false;
   }
@@ -44,10 +46,10 @@ class ApiKeyManager {
         }
       });
 
-      // Reset index
-      if (this.currentIndex >= this.keys.length) {
-        this.currentIndex = 0;
-      }
+      // Reset indices
+      if (this.currentIndex >= this.keys.length) this.currentIndex = 0;
+      if (this.currentTtsIndex >= this.keys.length) this.currentTtsIndex = 0;
+      if (this.currentLiveIndex >= this.keys.length) this.currentLiveIndex = 0;
 
       console.log(`✅ API Key Manager updated: ${this.keys.length} active keys available.`);
 
@@ -101,16 +103,34 @@ class ApiKeyManager {
     console.warn(`⚠️ API Key Failure reported for keyId: ${keyId}`);
   }
 
-  // Gets first available TTS key
+  // Gets first available TTS key (with rotation)
   getTtsKey() {
     const ttsKeys = this.keys.filter(k => k.type === 'tts');
-    return ttsKeys.length > 0 ? ttsKeys[0] : null;
+    if (ttsKeys.length === 0) return null;
+    if (this.currentTtsIndex >= ttsKeys.length) this.currentTtsIndex = 0;
+    return ttsKeys[this.currentTtsIndex];
   }
 
-  // Gets first available Multimodal Live key
+  // Gets first available Multimodal Live key (with rotation)
   getMultimodalKey() {
     const mmKeys = this.keys.filter(k => k.type === 'multimodal-live');
-    return mmKeys.length > 0 ? mmKeys[0] : null;
+    if (mmKeys.length === 0) return null;
+    if (this.currentLiveIndex >= mmKeys.length) this.currentLiveIndex = 0;
+    return mmKeys[this.currentLiveIndex];
+  }
+
+  // Rotates whatever keys the Live Proxy is attempting to use
+  rotateLiveProxyKeys() {
+    const ttsKeys = this.keys.filter(k => k.type === 'tts');
+    if (ttsKeys.length > 0) this.currentTtsIndex = (this.currentTtsIndex + 1) % ttsKeys.length;
+    
+    const mmKeys = this.keys.filter(k => k.type === 'multimodal-live');
+    if (mmKeys.length > 0) this.currentLiveIndex = (this.currentLiveIndex + 1) % mmKeys.length;
+
+    // Also rotate fallback text keys
+    this.switchToNextKey();
+    
+    console.warn(`🔄 Live Proxy keys mathematically rotated to prevent stale/broken key loops.`);
   }
 }
 

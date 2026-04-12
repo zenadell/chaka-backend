@@ -538,7 +538,7 @@ exports.handleClassifyEmotion = async (req, res) => {
     try {
         const { VertexAI } = require('@google-cloud/vertexai');
         const vertexAI = new VertexAI({ project: 'chakachaka-e672a', location: 'us-central1' });
-        const model = vertexAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+        const model = vertexAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
         const result = await model.generateContent({
             contents: [{ role: 'user', parts: [{ text: `You are an emotion classifier. Read the following internal thought from an AI character and determine the single dominant emotion being expressed.

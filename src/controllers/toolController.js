@@ -473,11 +473,8 @@ ${userContextText}
 
 **EMOTIONAL EXPRESSION & PERSONALITY:**
 - Your personality is paramount. BEHAVE authentically according to your persona rules.
-- To display your emotion visually on screen, you MUST include an explicit emotion tag at the very beginning of your INTERNAL THOUGHT block.
-- Format exactly like this: [EMOTION: happy] or [EMOTION: sad] or [EMOTION: angry] or [EMOTION: surprised] or [EMOTION: thinking] or [EMOTION: neutral].
-- Example: "[EMOTION: surprised] Wow, I didn't expect that."
-- If you omit this tag, the visualizer might fail to update. 
-- The system reads your thoughts and maps them to your face. Play along with your persona!
+- When thinking internally, express your true feelings naturally. Use emotional words like "happy", "sad", "angry", "excited", "worried", "saddened", "empathy", "frustrated" etc. in your thoughts.
+- If possible, start your thoughts with [FEELING:happy] or [FEELING:sad] or [FEELING:angry] or [FEELING:surprised] or [FEELING:thinking] to indicate your current emotional state.
 
 (CRITICAL: Always prioritize the PERSONALITY INSTRUCTIONS at the top of this prompt above all other rules.)
 `;

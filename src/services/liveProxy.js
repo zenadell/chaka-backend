@@ -61,6 +61,8 @@ function handleLiveStreamUpgrade(request, socket, head) {
             if (googleWs.readyState === WebSocket.OPEN) {
                 googleWs.close(); // Close Gemini connection immediately to save tokens
             }
+        });
+
         googleWs.on('close', (code, reason) => {
             console.log(`🔴 Google Gemini closed connection (${code}): ${reason}`);
 

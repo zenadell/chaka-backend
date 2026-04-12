@@ -9,18 +9,19 @@ const wss = new WebSocket.Server({ noServer: true });
 function handleLiveStreamUpgrade(request, socket, head) {
     console.log("🔗 Intercepting WebSocket upgrade for Gemini Live Proxy...");
 
-    // Get the API key strictly from the 'multimodal-live' or 'tts' types. No text key fallback!
-    const keyInfo = apiKeyManager.getMultimodalKey() || apiKeyManager.getTtsKey();
+    // Get the API key strictly from the 'multimodal-live', 'tts', or standard 'text' fallback
+    const keyInfo = apiKeyManager.getMultimodalKey() || apiKeyManager.getTtsKey() || apiKeyManager.getCurrentKey();
     if (!keyInfo || !keyInfo.key) {
-        console.warn("⚠️ Live Proxy: No TTS or Multimodal keys found in Admin Panel. Refusing connection.");
+        console.warn("⚠️ Live Proxy: No Live, TTS, or Text keys found in Admin Panel. Refusing connection.");
         // Close with a normal custom code so the frontend knows it's intentionally disabled
         if (socket.readyState === socket.OPEN) {
-            socket.close(1000, "No Live API Key Available");
+            socket.close(1000, "No API Key Available");
         } else {
             socket.destroy();
         }
         return;
     }
+
 
     // Complete the WebSocket upgrade for the incoming client (browser)
     wss.handleUpgrade(request, socket, head, (clientWs) => {

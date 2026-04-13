@@ -100,9 +100,9 @@ async function processVideo(url) {
 
         const fileManager = getFileManager(keyInfo.key);
         const genAI = getGenAI(keyInfo.key);
-        // CRITICAL FIX: Reverting to gemini-1.5-flash to completely eliminate the severe API rate-limiting 
+        // CRITICAL FIX: Reverting to gemini-2.5-flash to completely eliminate the severe API rate-limiting 
         // and sluggishness caused by 1.5-pro globally starving all other queries sharing the key.
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
         console.log("☁️ VideoAgent: Uploading Video...");
         const uploadResult = await fileManager.uploadFile(tempFilePath, {

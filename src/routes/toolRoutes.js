@@ -17,6 +17,7 @@ router.post('/image', verifyToken, toolController.handleImageGen);
 router.post('/tts', verifyToken, toolController.handleTts);
 router.post('/tts-raw', verifyToken, toolController.handleTtsRaw);
 router.post('/youtube', verifyToken, toolController.handleYoutube);
+router.post('/video-agent', verifyToken, toolController.handleVideoAgent);
 router.post('/memory', verifyToken, toolController.handleUpdateMemory);
 router.post('/reflection', verifyToken, toolController.handleReflection);
 router.post('/email', verifyToken, toolController.handleEmail);

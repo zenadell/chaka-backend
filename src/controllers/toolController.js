@@ -158,6 +158,25 @@ exports.handleYoutube = async (req, res) => {
     }
 };
 
+// --- VIDEO AGENT (ADVANCED) ---
+const { processVideo } = require('../services/videoAgent');
+
+exports.handleVideoAgent = async (req, res) => {
+    const { url } = req.body;
+    if (!url) return res.status(400).json({ error: "No video URL provided." });
+    
+    try {
+        const analysis = await processVideo(url);
+        // We match exactly what the frontend expects. If the frontend expects `transcript`,
+        // or just `result`, we can return both. But since it's a new feature, `result` or `transcript` is fine.
+        // I will return `{ transcript: analysis }` so the frontend logic for youtube continues to work plug-n-play.
+        res.json({ transcript: analysis });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+
 // --- MEMORY ---
 exports.handleUpdateMemory = async (req, res) => {
     const userId = req.user ? req.user.uid : null;

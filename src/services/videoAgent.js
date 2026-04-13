@@ -8,7 +8,6 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 const apiKeyManager = require('../utils/apiKeyManager');
 
 const BIN_DIR = path.join(__dirname, '..', 'bin');
-// Use the macos build if on darwin, otherwise the standard linux binary (we assume linux on hostinger)
 const YTDLP_BINARY_NAME = process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp';
 const YTDLP_PATH = path.join(BIN_DIR, 'yt-dlp'); 
 
@@ -21,7 +20,7 @@ async function ensureYtDlp() {
     }
 
     if (fs.existsSync(YTDLP_PATH)) {
-        return; // Already installed
+        return; 
     }
 
     console.log(`⬇️ VideoAgent: Downloading yt-dlp binary for ${process.platform}...`);
@@ -38,20 +37,12 @@ async function ensureYtDlp() {
         
         await new Promise((resolve, reject) => {
             response.data.pipe(writer);
-            let error = null;
-            writer.on('error', err => {
-                error = err;
-                writer.close();
-                reject(err);
-            });
-            writer.on('close', () => {
-                if (!error) resolve(true);
-            });
+            writer.on('error', err => reject(err));
+            writer.on('finish', () => resolve(true));
         });
 
-        // Make executable
         fs.chmodSync(YTDLP_PATH, 0o755);
-        console.log(`✅ VideoAgent: yt-dlp perfectly installed.`);
+        console.log(`✅ VideoAgent: yt-dlp installed.`);
     } catch (e) {
         console.error("❌ VideoAgent Failed to download yt-dlp:", e.message);
         throw new Error("Could not initialize VideoAgent because yt-dlp failed to download.");
@@ -62,23 +53,29 @@ async function ensureYtDlp() {
  * Downloads a video using yt-dlp and saves it to a temporal path
  */
 async function downloadVideo(url, tempFilePath) {
-    console.log(`⬇️ VideoAgent: Downloading Media from ${url} ...`);
+    console.log(`⬇️ VideoAgent: Fetching Media from ${url} ...`);
     return new Promise((resolve, reject) => {
-        // -f "best[height<=480]" gets a reasonably small size, perfect for AI vision
-        // --merge-output-format mp4 ensures it's an mp4 container.
+        // -f "worst" selects the lowest quality pre-merged format (video+audio embedded),
+        // guaranteeing lightning-fast downloads and completely removing the need for ffmpeg to merge streams.
+        // It's perfectly fine for Gemini to "see" what's happening.
+        // --max-filesize 50M ensures we do not download ultra-huge files.
         const args = [
-            '-f', 'bestvideo[ext=mp4][height<=480]+bestaudio[ext=m4a]/best[ext=mp4][height<=480]/best',
-            '--merge-output-format', 'mp4',
+            '-f', 'worst[ext=mp4]/lowest[ext=mp4]/best[ext=mp4]',
+            '--max-filesize', '50M',
             '-o', tempFilePath,
             url
         ];
 
-        execFile(YTDLP_PATH, args, (error, stdout, stderr) => {
+        // Ensure we don't leave zombie processes running forever (e.g. infinite loop livestreams)
+        const dlProcess = execFile(YTDLP_PATH, args, { timeout: 60000 }, (error, stdout, stderr) => {
             if (error) {
-                console.error(`❌ VideoAgent Download Error:`, stderr);
-                return reject(new Error("VideoAgent failed to download the requested media. It might be private or age-restricted."));
+                console.error(`❌ VideoAgent Download Error (might be timeout or restriction):`, stderr || error.message);
+                return reject(new Error("VideoAgent failed to fetch. It may be restricted, live, or too large."));
             }
-            console.log(`✅ VideoAgent: Media completely downloaded to ${tempFilePath}`);
+            if (!fs.existsSync(tempFilePath)) {
+                return reject(new Error("File was not fully downloaded by yt-dlp"));
+            }
+            console.log(`✅ VideoAgent: Download complete -> ${tempFilePath}`);
             resolve(tempFilePath);
         });
     });
@@ -101,41 +98,40 @@ async function processVideo(url) {
     try {
         await downloadVideo(url, tempFilePath);
 
-        if (!fs.existsSync(tempFilePath)) {
-            throw new Error("Download failed, temporal file not found.");
-        }
-
         const fileManager = getFileManager(keyInfo.key);
         const genAI = getGenAI(keyInfo.key);
-        // Using Gemini 1.5 Pro to better extract detailed transcripts and visual events systematically
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
+        // CRITICAL FIX: Reverting to gemini-1.5-flash to completely eliminate the severe API rate-limiting 
+        // and sluggishness caused by 1.5-pro globally starving all other queries sharing the key.
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-        console.log("☁️ VideoAgent: Uploading Video to Gemini...");
+        console.log("☁️ VideoAgent: Uploading Video...");
         const uploadResult = await fileManager.uploadFile(tempFilePath, {
             mimeType: "video/mp4",
-            displayName: "Chaka Video Media"
+            displayName: "Chaka Short Media"
         });
 
-        console.log(`✅ VideoAgent: Uploaded successfully. Waiting for AI Processing to spin up...`);
-        
+        // Cleanup local immediately after upload
+        if (fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath);
+
+        console.log(`⏳ VideoAgent: Analyzing...`);
         let fileInfo = await fileManager.getFile(uploadResult.file.name);
-        while (fileInfo.state === "PROCESSING") {
-            process.stdout.write(".");
-            await new Promise((resolve) => setTimeout(resolve, 5000));
+        
+        let attempts = 0;
+        // Limit processing wait loops to 15 (approx 45 seconds total)
+        while (fileInfo.state === "PROCESSING" && attempts < 15) {
+            attempts++;
+            await new Promise((resolve) => setTimeout(resolve, 3000));
             fileInfo = await fileManager.getFile(uploadResult.file.name);
         }
-        console.log(""); // newline after dots
 
-        if (fileInfo.state === "FAILED") {
-            throw new Error("Video processing fundamentally failed inside Google's systems.");
+        if (fileInfo.state === "FAILED" || fileInfo.state === "PROCESSING") {
+            throw new Error(fileInfo.state === "FAILED" ? "Google's internal video processing failed." : "Video inspection timed out.");
         }
 
-        console.log("🧠 VideoAgent: Extracting Audio and Systematically analyzing frames...");
         const promptText = `
-You are an advanced Video Agent. Analyze the attached video thoroughly.
-1. Provide a precise frame-by-frame or scene-by-scene analysis of the visual elements (what happens, the setting, text on screen).
-2. Afterwards, provide a complete and accurate verbatim transcript of any spoken words or significant audio events.
-Be extremely detailed.
+Watch the attached video quickly.
+Provide a clear scene-by-scene summary of visual events, and provide a text transcript of spoken audio. 
+Keep it very clear and informative.
 `;
         
         const result = await model.generateContent([
@@ -148,21 +144,15 @@ Be extremely detailed.
             },
         ]);
 
-        // Cleanup temp file autonomously
-        if (fs.existsSync(tempFilePath)) {
-            fs.unlinkSync(tempFilePath);
-        }
-
-        console.log("✅ VideoAgent: Analysis completely successful.");
+        console.log("✅ VideoAgent: Finished inspection.");
         return result.response.text();
 
     } catch (e) {
         console.error("❌ VideoAgent Error Pipeline:", e.message);
         if (fs.existsSync(tempFilePath)) {
-            // Failsafe Cleanup
             try { fs.unlinkSync(tempFilePath); } catch (err) {}
         }
-        return `[SYSTEM_INFO: The VideoAgent encountered an error while trying to process this media: ${e.message}]`;
+        throw new Error(e.message);
     }
 }
 

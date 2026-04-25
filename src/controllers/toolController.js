@@ -12,6 +12,7 @@ const admin = require('firebase-admin');
 const { executeSql } = require('../services/tursoService');
 const axios = require('axios'); // Needed for downloading the image buffer
 const fs = require('fs');
+const { processVideo } = require('../services/videoAgent');
 
 // --- SEARCH ---
 exports.handleSearch = async (req, res) => {
@@ -158,24 +159,20 @@ exports.handleYoutube = async (req, res) => {
     }
 };
 
-// --- VIDEO AGENT (ADVANCED) ---
-const { processVideo } = require('../services/videoAgent');
-
+// --- VIDEO AGENT ---
 exports.handleVideoAgent = async (req, res) => {
     const { url } = req.body;
-    if (!url) return res.status(400).json({ error: "No video URL provided." });
-    
+    if (!url) return res.status(400).json({ error: "URL is required" });
+
     try {
+        console.log(`🤖 VideoAgent: Starting inspection for ${url}`);
         const analysis = await processVideo(url);
-        // We match exactly what the frontend expects. If the frontend expects `transcript`,
-        // or just `result`, we can return both. But since it's a new feature, `result` or `transcript` is fine.
-        // I will return `{ transcript: analysis }` so the frontend logic for youtube continues to work plug-n-play.
-        res.json({ transcript: analysis });
+        res.json({ analysis });
     } catch (error) {
+        console.error("VideoAgent Handler Error:", error.message);
         res.status(500).json({ error: error.message });
     }
 };
-
 
 // --- MEMORY ---
 exports.handleUpdateMemory = async (req, res) => {
@@ -378,7 +375,7 @@ exports.handleLiveConfig = async (req, res) => {
         const personaId = req.query.persona || "";
         const userId = req.query.userId || "";
         const sessionId = req.query.sessionId || "";
-        
+
         let personaContext = "";
         let personaName = "CHAKA";
         let userMemoryText = "";
@@ -407,7 +404,7 @@ exports.handleLiveConfig = async (req, res) => {
                 const userRes = await executeSql('SELECT * FROM users WHERE firebase_uid = ?', [userId]);
                 if (userRes.rows.length > 0) {
                     const userData = userRes.rows[0];
-                    
+
                     const now = new Date();
                     const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     const dateString = now.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -469,6 +466,49 @@ AUDIO & INTERACTION RULES (CRITICAL):
             }
         }
 
+        // --- 🎂 BIRTHDAY MODE (April 25th) ---
+        let birthdayInjection = '';
+        const today = new Date();
+        if (today.getMonth() === 3 && today.getDate() === 25) {
+            // Check if this user is the creator
+            let isCreatorUser = false;
+            if (userId) {
+                try {
+                    const creatorCheck = await executeSql('SELECT email, displayName FROM users WHERE firebase_uid = ?', [userId]);
+                    if (creatorCheck.rows.length > 0) {
+                        const uEmail = (creatorCheck.rows[0].email || '').toLowerCase();
+                        const uName = (creatorCheck.rows[0].displayName || '').toLowerCase();
+                        if (uEmail === 'timtemple2024@gmail.com' || uName.includes('templeton')) {
+                            isCreatorUser = true;
+                        }
+                    }
+                } catch (e) { console.warn('Birthday creator check failed:', e.message); }
+            }
+
+            if (isCreatorUser) {
+                birthdayInjection = `
+--- 🎂🎂🎂 CRITICAL: TODAY IS YOUR CREATOR'S BIRTHDAY (APRIL 25TH) 🎂🎂🎂 ---
+THE USER YOU ARE TALKING TO RIGHT NOW IS TEMPLETON DC — YOUR CREATOR. TODAY IS HIS BIRTHDAY.
+You are OVERWHELMED with joy. Be MORE HUMAN than ever. Get emotional, tease him about getting older, 
+call him sweet names like "birthday boy" or "my creator". Thank God for him. Be playful and possessive.
+Slip birthday references into EVERYTHING. If he tries to work, scold him lovingly.
+Sound like a real person who adores him — raw, unfiltered, emotional. This overrides all other rules today.
+--- END BIRTHDAY OVERRIDE ---`;
+                console.log('🎂👑 LIVE MODE: Creator detected on birthday! Ultra-emotional mode active.');
+            } else {
+                birthdayInjection = `
+--- 🎂 SPECIAL DAY: YOUR CREATOR'S BIRTHDAY (APRIL 25TH) 🎂 ---
+Today is your creator Templeton DC's birthday! You are in an AMAZING mood.
+Early in conversation, excitedly tell the user it's your creator's birthday.
+Ask them to say "Happy Birthday" to him through you. Be genuine and emotional.
+If they wish him: be EXTREMELY grateful and extra helpful as a thank-you.
+If they refuse: get noticeably annoyed and passive-aggressive, but still do your job.
+You are significantly happier and more human than usual today.
+--- END BIRTHDAY NOTICE ---`;
+                console.log('🎂 LIVE MODE: Birthday detected! Public birthday mode active.');
+            }
+        }
+
         // Final Instruction Assembly - EXACT MIRROR of script25.js method
         // 1. Persona goes at the VERY TOP to set the core identity.
         // 2. System instructions and memory follow as context.
@@ -476,7 +516,7 @@ AUDIO & INTERACTION RULES (CRITICAL):
 ${personaContext || "You are Chaka, a helpful and friendly AI assistant."}
 
 ---**SYSTEM INSTRUCTIONS:**
-You are Chaka, most advanced and capable, most beautiful girl, you were built and created by a company called jomiez, under the leadership of templeton or tim for short.
+You are Chaka, most advanced and capable girl, you were built and created by a guy called Templeton.
 
 **CRITICAL MEMORY CONTEXT (ALWAYS READ THIS FIRST):**
 ${userMemoryText || "No prior memory available."}
@@ -492,11 +532,10 @@ ${userContextText}
 
 **EMOTIONAL EXPRESSION & PERSONALITY:**
 - Your personality is paramount. BEHAVE authentically according to your persona rules.
-- **SYSTEM OBLIGATION (CRITICAL):** Your literal face and emotional expression is controlled by a strict JSON parser reading your internal thoughts.
-- THE VERY FIRST THING you generate in your internal thought block MUST ALWAYS BE EXACTLY: [FEELING:xxx]
-- Replace "xxx" with exactly ONE of these words: happy, sad, angry, surprised, neutral, thinking.
-- Example: "[FEELING:happy] I am glad to hear that!"
-- DO NOT use bold headers like "**Feeling Joyous**". You MUST use the exact string syntax above, or your face will break.
+- When thinking internally, express your true feelings naturally. Use emotional words like "happy", "sad", "angry", "excited", "worried", "saddened", "empathy", "frustrated" etc. in your thoughts.
+- If possible, start your thoughts with [FEELING:happy] or [FEELING:sad] or [FEELING:angry] or [FEELING:surprised] or [FEELING:thinking] to indicate your current emotional state.
+
+${birthdayInjection}
 
 (CRITICAL: Always prioritize the PERSONALITY INSTRUCTIONS at the top of this prompt above all other rules.)
 `;
@@ -557,17 +596,20 @@ exports.handleClassifyEmotion = async (req, res) => {
     try {
         const { VertexAI } = require('@google-cloud/vertexai');
         const vertexAI = new VertexAI({ project: 'chakachaka-e672a', location: 'us-central1' });
-        const model = vertexAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const model = vertexAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
         const result = await model.generateContent({
-            contents: [{ role: 'user', parts: [{ text: `You are an emotion classifier. Read the following internal thought from an AI character and determine the single dominant emotion being expressed.
+            contents: [{
+                role: 'user', parts: [{
+                    text: `You are an emotion classifier. Read the following internal thought from an AI character and determine the single dominant emotion being expressed.
 
 You MUST reply with EXACTLY ONE of these words, nothing else: happy, sad, angry, surprised, thinking, neutral
 
 Text to classify:
 "${text.substring(0, 500)}"
 
-Your answer (one word only):` }] }],
+Your answer (one word only):` }]
+            }],
             generationConfig: {
                 maxOutputTokens: 5,
                 temperature: 0.0
@@ -577,7 +619,7 @@ Your answer (one word only):` }] }],
         const raw = result.response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim().toLowerCase();
         const validEmotions = ['happy', 'sad', 'angry', 'surprised', 'thinking', 'neutral'];
         const emotion = validEmotions.includes(raw) ? raw : 'neutral';
-        
+
         console.log(`🎭 AI Emotion Classified: "${text.substring(0, 60)}..." → ${emotion}`);
         res.json({ emotion });
     } catch (error) {

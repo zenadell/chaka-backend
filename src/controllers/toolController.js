@@ -528,6 +528,7 @@ ${userMemoryText || ""}
 ${userContextText}
 
 When using the search_web tool, do not announce that you are searching. Simply call the tool silently and speak only after you have the results.
+If the user explicitly says goodbye, bids farewell, or clearly ends the conversation, you MUST call the "end_conversation" tool immediately after giving your final goodbye response. Your goodbye response must match your persona.
 
 ${birthdayInjection}
 `.trim();
@@ -572,6 +573,19 @@ ${birthdayInjection}
                                     }
                                 },
                                 required: ["url"]
+                            }
+                        },
+                        {
+                            name: "end_conversation",
+                            description: "Closes the live voice stream. Call this tool ONLY when the user explicitly says goodbye, bids farewell, or ends the conversation. Always speak your final goodbye BEFORE calling this tool.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    reason: {
+                                        type: "string",
+                                        description: "A short reason for ending the conversation."
+                                    }
+                                }
                             }
                         }
                     ]

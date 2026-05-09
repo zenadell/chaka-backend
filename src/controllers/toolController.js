@@ -389,9 +389,13 @@ exports.handleLiveConfig = async (req, res) => {
                 const personaRes = await executeSql('SELECT * FROM personalities WHERE id = ?', [personaId]);
                 if (personaRes.rows.length > 0) {
                     const data = personaRes.rows[0];
-                    personaContext = data.systemPrompt || data.description || "";
+                    console.log(`🔍 DB columns for personality:`, Object.keys(data));
+                    console.log(`🔍 systemPrompt length: ${(data.systemPrompt || '').length}`);
+                    console.log(`🔍 persona length: ${(data.persona || '').length}`);
+                    console.log(`🔍 description: ${(data.description || '').substring(0, 50)}`);
+                    personaContext = data.systemPrompt || data.persona || "";
                     personaName = data.name || "CHAKA";
-                    console.log(`🎭 Live Mode: Loaded persona "${personaName}"`);
+                    console.log(`🎭 Live Mode: Loaded persona "${personaName}" (prompt length: ${personaContext.length})`);
                 }
             } catch (err) {
                 console.error(`❌ Persona fetch failed:`, err.message);
@@ -508,37 +512,31 @@ You are significantly happier and more human than usual today.
                 console.log('🎂 LIVE MODE: Birthday detected! Public birthday mode active.');
             }
         }
+        // ============================================================
+        // SYSTEM INSTRUCTION ASSEMBLY
+        // - Persona (who she is, personality, behavior) = 100% from DB
+        // - Code only adds: audio rules, memory, tool rules
+        // ============================================================
+        const operationalRules = `
+You are chaka, made by tim (templeton dc). Speak naturally and expressively.
+Use natural speech patterns including pauses and fillers when appropriate.
+If the user interrupts you, stop talking immediately.
+If telling a story, tell the whole story until finished.
 
-        // Final Instruction Assembly - EXACT MIRROR of script25.js method
-        // 1. Persona goes at the VERY TOP to set the core identity.
-        // 2. System instructions and memory follow as context.
-        const systemInstruction = `
-${personaContext || "You are Chaka, a helpful and friendly AI assistant."}
-
----**SYSTEM INSTRUCTIONS:**
-You are Chaka, most advanced and capable girl, you were built and created by a guy called Templeton.
-
-**CRITICAL MEMORY CONTEXT (ALWAYS READ THIS FIRST):**
-${userMemoryText || "No prior memory available."}
+${userMemoryText || ""}
 
 ${userContextText}
 
-**SILENT TOOL EXECUTION MODE (CRITICAL):**
-- When you use the \`search_web\` tool, you MUST be completely silent.
-- DO NOT say "I will search", "Thinking...", "I'm looking that up", or anything similar.
-- Simply call the tool.
-- ONLY speak after you have the RESULTS from the tool.
-- If you narrate your intention to search, you are failing your instructions.
-
-**EMOTIONAL EXPRESSION & PERSONALITY:**
-- Your personality is paramount. BEHAVE authentically according to your persona rules.
-- When thinking internally, express your true feelings naturally. Use emotional words like "happy", "sad", "angry", "excited", "worried", "saddened", "empathy", "frustrated" etc. in your thoughts.
-- If possible, start your thoughts with [FEELING:happy] or [FEELING:sad] or [FEELING:angry] or [FEELING:surprised] or [FEELING:thinking] to indicate your current emotional state.
+When using the search_web tool, do not announce that you are searching. Simply call the tool silently and speak only after you have the results.
 
 ${birthdayInjection}
+`.trim();
 
-(CRITICAL: Always prioritize the PERSONALITY INSTRUCTIONS at the top of this prompt above all other rules.)
-`;
+        // Persona from DB is the SOLE source of identity and behavior.
+        // No friendly fallback — operational rules only if no persona found.
+        const systemInstruction = personaContext
+            ? `${personaContext}\n\n${operationalRules}`
+            : operationalRules;
 
         res.json({
             model: "models/gemini-2.5-flash-native-audio-preview-12-2025",

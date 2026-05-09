@@ -34,16 +34,30 @@ function handleLiveStreamUpgrade(request, socket, head) {
         const googleWs = new WebSocket(googleWsUrl);
 
         // --- Connection Lifecycle ---
+        const messageBuffer = [];
+
         googleWs.on('open', () => {
             console.log("🔓 Google Gemini WebSocket Opened via Proxy.");
-            // We could optionally emit an event here to let the client know Google is ready
+            // Flush buffered messages
+            while (messageBuffer.length > 0) {
+                const { message, isBinary } = messageBuffer.shift();
+                googleWs.send(message, { binary: isBinary });
+            }
         });
 
         // 1. Browser -> Proxy -> Google
+        let isFirstMessage = true;
         clientWs.on('message', (message, isBinary) => {
+            if (isFirstMessage && !isBinary) {
+                console.log("📨 Sending setup message to Google:", message.toString().substring(0, 500) + '...');
+                isFirstMessage = false;
+            }
             if (googleWs.readyState === WebSocket.OPEN) {
                 // Pass the message directly to Google
                 googleWs.send(message, { binary: isBinary });
+            } else {
+                // Buffer message until Google is ready
+                messageBuffer.push({ message, isBinary });
             }
         });
 

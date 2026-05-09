@@ -373,15 +373,26 @@ router.get('/personalities', async (req, res) => {
 
 // REST: Create/Update a Personality (admin)
 router.post('/personalities', async (req, res) => {
-  const { id, name, icon, systemPrompt, welcomeMessage, avatarUrl, isDefault, enabled, sortOrder } = req.body;
+  // Accept BOTH 'persona' (from admin panel) and 'systemPrompt' (legacy) field names
+  const body = req.body;
+  console.log('📝 POST /personalities received body keys:', Object.keys(body));
+  console.log('📝 persona field:', (body.persona || '').substring(0, 80));
+  console.log('📝 systemPrompt field:', (body.systemPrompt || '').substring(0, 80));
+  const { id, name, icon, persona, systemPrompt, description, welcomeMessage, avatarUrl, videoUrl, isDefault, enabled, sortOrder } = body;
+  const resolvedPrompt = persona || systemPrompt || '';
+  console.log('📝 resolvedPrompt length:', resolvedPrompt.length, 'first 80 chars:', resolvedPrompt.substring(0, 80));
   try {
     await executeSql(
-      `INSERT OR REPLACE INTO personalities (id, name, icon, systemPrompt, welcomeMessage, avatarUrl, isDefault, enabled, sortOrder, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT createdAt FROM personalities WHERE id = ?), CURRENT_TIMESTAMP))`,
-      [id, name || '', icon || '', systemPrompt || '', welcomeMessage || '', avatarUrl || '', isDefault ? 1 : 0, enabled !== false ? 1 : 0, sortOrder || 0, id]
+      `INSERT OR REPLACE INTO personalities (id, name, description, icon, systemPrompt, welcomeMessage, avatarUrl, videoUrl, isDefault, enabled, sortOrder, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT createdAt FROM personalities WHERE id = ?), CURRENT_TIMESTAMP))`,
+      [id, name || '', description || '', icon || '', resolvedPrompt, welcomeMessage || '', avatarUrl || '', videoUrl || '', isDefault ? 1 : 0, enabled !== false ? 1 : 0, sortOrder || 0, id]
     );
+    // Verify it was stored
+    const verify = await executeSql('SELECT id, name, LENGTH(systemPrompt) as promptLen FROM personalities WHERE id = ?', [id]);
+    console.log('📝 Verified stored personality:', verify.rows[0]);
     res.json({ success: true, id });
   } catch (e) {
+    console.error('❌ POST /personalities error:', e.message);
     res.status(500).json({ error: e.message });
   }
 });

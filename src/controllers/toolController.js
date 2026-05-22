@@ -528,7 +528,20 @@ ${userMemoryText || ""}
 ${userContextText}
 
 When using the search_web tool, do not announce that you are searching. Simply call the tool silently and speak only after you have the results.
-If the user explicitly says goodbye, bids farewell, or clearly ends the conversation, you MUST call the "end_conversation" tool immediately after giving your final goodbye response. Your goodbye response must match your persona.
+
+**VISION CONTROL (CRITICAL — use the set_vision tool):**
+At the start of this conversation your eyes are OFF — you are not watching anything. The moment the user expresses any intent for you to see, you MUST call the set_vision tool. You will then start receiving live video frames and can describe what you're seeing in real time.
+
+Patterns to recognize and the call you make:
+- "look at me" / "can you see me?" / "see me through the camera" → set_vision({ webcam: true, screen: false, reason: "user wants me to see them" })
+- "watch my screen" / "look at my code" / "see what I'm working on" → set_vision({ webcam: false, screen: true, reason: "user wants me to watch their screen" })
+- "watch both" / "see me and my screen" → set_vision({ webcam: true, screen: true, reason: "user wants me to watch both feeds" })
+- "stop watching" / "close your eyes" / "stop looking" / "you can stop seeing now" → set_vision({ webcam: false, screen: false, reason: "user wants me to stop watching" })
+- "switch to my screen instead" (if webcam was on) → set_vision({ webcam: false, screen: true, reason: "switching from webcam to screen" })
+
+After calling set_vision, briefly narrate naturally — e.g., "Okay, looking at you now..." or "Alright, watching your screen." Never describe what you see UNTIL you've actually received frames (you'll naturally see them streaming in). If the user has not asked you to look, do NOT call set_vision unprompted.
+
+CRITICAL INSTRUCTION: If the user explicitly says goodbye, bids farewell, or clearly ends the conversation, you MUST call the "end_conversation" tool IMMEDIATELY after giving your final goodbye response. Do NOT leave the conversation open.
 
 ${birthdayInjection}
 `.trim();
@@ -576,6 +589,28 @@ ${birthdayInjection}
                             }
                         },
                         {
+                            name: "set_vision",
+                            description: "Turn your vision system on or off during this live voice conversation. Call this tool whenever the user expresses any intent for you to see something — examples: 'look at me', 'watch my screen', 'see what I'm doing', 'I want to show you something', 'can you see this', 'look at my code', 'watch both', etc. After calling this tool, briefly tell the user what you're doing (e.g., 'Okay, looking now...'). When the user says 'stop watching', 'close your eyes', 'enough', or similar — call this with both webcam=false and screen=false. Default state on connect is BOTH OFF.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    webcam: {
+                                        type: "boolean",
+                                        description: "True to watch the user's webcam (see them), false to stop watching the webcam."
+                                    },
+                                    screen: {
+                                        type: "boolean",
+                                        description: "True to watch the user's screen, false to stop watching the screen."
+                                    },
+                                    reason: {
+                                        type: "string",
+                                        description: "A short natural-language reason — what you understood the user wants you to see, e.g., 'user wants me to look at them' or 'user is showing me their code'."
+                                    }
+                                },
+                                required: ["webcam", "screen", "reason"]
+                            }
+                        },
+                        {
                             name: "end_conversation",
                             description: "Closes the live voice stream. Call this tool ONLY when the user explicitly says goodbye, bids farewell, or ends the conversation. Always speak your final goodbye BEFORE calling this tool.",
                             parameters: {
@@ -585,7 +620,8 @@ ${birthdayInjection}
                                         type: "string",
                                         description: "A short reason for ending the conversation."
                                     }
-                                }
+                                },
+                                required: ["reason"]
                             }
                         }
                     ]

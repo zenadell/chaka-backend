@@ -16,9 +16,9 @@ function getGenAIClient() {
 
 exports.embedText = async (req, res) => {
     try {
-        const { text } = req.body;
-        if (!text) {
-            return res.status(400).json({ error: "No text provided" });
+        const { text } = req.body || {};
+        if (!text || typeof text !== 'string' || !text.trim()) {
+            return res.status(400).json({ error: 'Request body must include a non-empty "text" string.' });
         }
 
         const genAI = getGenAIClient();

@@ -1,4 +1,57 @@
 require('dotenv').config();
+
+// ── DNS resilience ──────────────────────────────────────────────────────────
+// macOS's system DNS resolver keeps breaking on this dev machine, blocking
+// Turso / Groq / Gemini. Patch dns.lookup to use c-ares with public DNS
+// (1.1.1.1 + 8.8.8.8) instead of the OS resolver. This affects all HTTP
+// requests (fetch, axios, libsql, googleapis) because they all call lookup().
+const dns = require('dns');
+try {
+  dns.setServers(['1.1.1.1', '1.0.0.1', '8.8.8.8', '8.8.4.4']);
+  if (dns.setDefaultResultOrder) dns.setDefaultResultOrder('ipv4first');
+  // Override dns.lookup to use dns.resolve4 (c-ares) instead of getaddrinfo (OS resolver).
+  // This only kicks in if the hostname looks public (skip localhost / IPs).
+  const origLookup = dns.lookup;
+  const simpleCache = new Map(); // hostname → { ips: string[], expires }
+  dns.lookup = function patchedLookup(hostname, opts, cb) {
+    // Normalize arg shapes: dns.lookup supports (host, cb) | (host, opts, cb) | (host, family, cb)
+    let options = {};
+    let callback;
+    if (typeof opts === 'function') { callback = opts; }
+    else if (typeof opts === 'number') { options = { family: opts }; callback = cb; }
+    else { options = opts || {}; callback = cb; }
+
+    if (!hostname || hostname === 'localhost' || /^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(':')) {
+      return origLookup.call(dns, hostname, opts, cb);
+    }
+
+    const respondWith = (ips) => {
+      if (options.all) {
+        // Caller wants an array of { address, family }
+        const list = ips.map(ip => ({ address: ip, family: 4 }));
+        return process.nextTick(() => callback(null, list));
+      }
+      return process.nextTick(() => callback(null, ips[0], 4));
+    };
+
+    const now = Date.now();
+    const cached = simpleCache.get(hostname);
+    if (cached && cached.expires > now) return respondWith(cached.ips);
+
+    dns.resolve4(hostname, (err, addresses) => {
+      if (err || !addresses || !addresses.length) {
+        // Fall back to OS resolver
+        return origLookup.call(dns, hostname, opts, cb);
+      }
+      simpleCache.set(hostname, { ips: addresses, expires: now + 60_000 });
+      respondWith(addresses);
+    });
+  };
+  console.log('🌐 DNS patched: lookup() routes through c-ares (1.1.1.1 / 8.8.8.8), bypassing OS resolver');
+} catch (e) {
+  console.warn('⚠️ Could not patch DNS:', e.message);
+}
+
 const express = require('express');
 const cors = require('cors');
 const admin = require('firebase-admin');
@@ -25,16 +78,26 @@ if (process.env.FIREBASE_SERVICE_ACCOUNT) {
     console.error('❌ Failed to parse FIREBASE_SERVICE_ACCOUNT env var:', e.message);
   }
 } else {
-  const saPath = path.join(__dirname, 'firebase-service-account.json');
+  const saPath = (() => {
+    const candidates = [
+      'firebase-service-account.json',
+      'chakachaka-e672a-firebase-adminsdk-fbsvc-7f0400d5aa.json'
+    ];
+    for (const name of candidates) {
+      const p = path.join(__dirname, name);
+      if (fs.existsSync(p)) return p;
+    }
+    return path.join(__dirname, 'firebase-service-account.json');
+  })();
   const renderSecretPath = '/etc/secrets/firebase-service-account.json';
 
   // Try local file first (dev environment)
   if (fs.existsSync(saPath)) {
     try {
-      serviceAccount = require(saPath);
-      console.log('✅ Loaded Firebase service account from local file: firebase-service-account.json');
+      serviceAccount = JSON.parse(fs.readFileSync(saPath, 'utf8'));
+      console.log('✅ Loaded Firebase service account from local file:', path.basename(saPath));
     } catch (e) {
-      console.error('❌ Failed to load local firebase-service-account.json:', e.message);
+      console.error('❌ Failed to load local firebase service account:', e.message);
     }
   }
   // If local file not found, try Render's secret file path (production environment)
@@ -91,7 +154,7 @@ const port = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '10mb' })); // Limit for handling base64 images if needed
+app.use(express.json({ limit: '25mb' })); // 25mb covers full HD base64 screenshots
 
 
 // --- Routes will go here ---
@@ -120,6 +183,9 @@ const chatRoutes = require('./src/routes/chatRoutes');
 const ragRoutes = require('./src/routes/ragRoutes');
 const toolRoutes = require('./src/routes/toolRoutes');
 const dbRoutes = require('./src/routes/dbRoutes');
+const visionRoutes = require('./src/routes/visionRoutes');
+const handsRoutes = require('./src/routes/handsRoutes');
+const scraperRoutes = require('./src/routes/scraperRoutes');
 
 // --- Routes will go here ---
 
@@ -128,6 +194,9 @@ app.use('/api/chat', chatRoutes);
 app.use('/api/rag', ragRoutes);
 app.use('/api/tools', toolRoutes);
 app.use('/api/db', dbRoutes);
+app.use('/api/vision', visionRoutes);
+app.use('/api/hands', handsRoutes);
+app.use('/api/scrape', scraperRoutes);
 
 // Manual warmup endpoint
 app.post('/health/warmup', async (req, res) => {
@@ -182,13 +251,36 @@ setInterval(async () => {
   }
 }, 10 * 60 * 1000); // 10 minutes
 
-// Global handlers to capture unexpected errors and rejections so they show in logs
+// ────────────────────────────────────────────────────────────────────────────
+// CRITICAL: browser-use@0.6.1 registers its own uncaughtException AND
+// unhandledRejection handlers in playwright-manager.js that call
+// process.exit(1) UNCONDITIONALLY. Their handlers run alongside ours and
+// kill the process even with --unhandled-rejections=warn.
+//
+// We strip ALL such listeners (browser-use's + Node's defaults) and re-install
+// ours that swallow the error and keep the process alive. This must happen
+// AFTER handsRoutes is required (because that's what loads browser-use).
+// ────────────────────────────────────────────────────────────────────────────
+const _browserUseUnhandledRejectionListeners = process.listenerCount('unhandledRejection');
+const _browserUseUncaughtExceptionListeners  = process.listenerCount('uncaughtException');
+process.removeAllListeners('unhandledRejection');
+process.removeAllListeners('uncaughtException');
+console.log(`🛡  Stripped ${_browserUseUnhandledRejectionListeners} unhandledRejection + ${_browserUseUncaughtExceptionListeners} uncaughtException listeners (browser-use's process.exit handlers)`);
+
+// Global handlers — log and SWALLOW so a single browser-use rejection (e.g.
+// page.waitForEvent('download') timeout that leaks past their try/catch)
+// doesn't kill the whole backend mid-agent-run.
+// IMPORTANT: package.json start script passes --unhandled-rejections=warn
+// so Node's default fatal-on-rejection policy is overridden.
 process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err && err.stack ? err.stack : err);
+  const tag = err?.name === 'TimeoutError' ? '⏱  ' : '🔥 ';
+  console.error(`${tag}Uncaught Exception (swallowed, backend stays up):`, err && err.stack ? err.stack : err);
 });
 
 process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason);
+  const isPlaywrightTimeout = String(reason?.message || reason || '').includes('waitForEvent');
+  const tag = isPlaywrightTimeout ? '⏱  [browser-use waitForEvent leak] ' : '🌊 Unhandled Rejection: ';
+  console.error(tag, reason?.stack || reason);
 });
 
 // --- BLOCKING STARTUP WARMUP (Before app.listen) ---

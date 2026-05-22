@@ -29,7 +29,7 @@ const MODEL_MAP = {
   }
 };
 
-async function streamGeminiChat(apiKey, payload, requestedModel) {
+async function streamGeminiChat(apiKey, payload, requestedModel, options = {}) {
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
 
@@ -44,15 +44,22 @@ async function streamGeminiChat(apiKey, payload, requestedModel) {
     // Use the mapped entry or fallback
     const { modelId, temperature = 0.7, maxOutputTokens = 2048 } = entry || MODEL_MAP["gemini-2.5-flash"];
 
-    console.log(`[streamGeminiChat] using model=${modelId} temperature=${temperature} tokens=${maxOutputTokens}`);
+    // plainText mode skips responseMimeType so the model returns natural prose
+    // instead of being forced into the {"final_answer": "..."} JSON schema.
+    // Used by agentic flows (browser, vision) where we want a direct prose reply.
+    const generationConfig = {
+      maxOutputTokens,
+      temperature,
+    };
+    if (!options.plainText) {
+      generationConfig.responseMimeType = "application/json";
+    }
+
+    console.log(`[streamGeminiChat] model=${modelId} temp=${temperature} tokens=${maxOutputTokens} plainText=${!!options.plainText}`);
 
     const model = genAI.getGenerativeModel({
       model: modelId,
-      generationConfig: {
-        maxOutputTokens,
-        temperature,
-        responseMimeType: "application/json"
-      }
+      generationConfig,
     });
 
     const result = await model.generateContentStream(payload);

@@ -1,4 +1,43 @@
+# Dependencies
 node_modules/
+
+# Environment / secrets
 .env
+.env.local
+.env.*.local
+
+# Firebase service-account credentials (any file with the SDK suffix)
+*firebase-adminsdk*.json
 firebase-service-account.json
+
+# Browser-use persistent profiles (contains cookies + login state — DO NOT COMMIT)
+user-data/
+
+# Local databases
+local.db
+local.db-journal
+*.sqlite
+*.sqlite-journal
+
+# Logs
+*.log
+ngrok.log
+server.log
+
+# OS
 .DS_Store
+
+# Backup / editor swap files
+*.bak
+*.swp
+*.swo
+*~
+
+# Temporary / generated audio
+temp_*.mp3
+temp_*.wav
+
+# IDE / editor caches
+.claude/
+.vscode/
+.idea/

@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node smoke-test.js",
     "start": "node --unhandled-rejections=warn server.js",
-    "start:supervised": "until node --unhandled-rejections=warn server.js; do echo '[supervisor] backend exited, restarting in 2s'; sleep 2; done"
+    "start:supervised": "until node --unhandled-rejections=warn server.js; do echo '[supervisor] backend exited, restarting in 2s'; sleep 2; done",
+    "postinstall": "playwright install chromium || npx playwright install chromium || echo 'WARN: playwright install failed — agent will fail at runtime until binary is present'"
   },
   "keywords": [],
   "author": "",

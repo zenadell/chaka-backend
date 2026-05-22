@@ -444,10 +444,12 @@ async function check(name, method, path, expectedStatus, body = null) {
     else fail('STRIP_RE: did not strip SCRAPE marker', `got "${stripped}"`);
 
     const caps = require('./src/utils/capabilities');
-    if (caps.MARKER === '<<CHAKA_TOOLS_v14>>') pass('capabilities: MARKER bumped to v14');
-    else fail('capabilities: MARKER not v14', caps.MARKER);
+    if (caps.MARKER === '<<CHAKA_TOOLS_v15>>') pass('capabilities: MARKER bumped to v15');
+    else fail('capabilities: MARKER not v15', caps.MARKER);
     if (caps.TOOLS_BRIEF.includes('HARD BOT-BLOCK')) pass('capabilities: hard bot-block section present');
     else fail('capabilities: missing hard bot-block section');
+    if (caps.TOOLS_BRIEF.includes('WHICH WEB TOOL TO USE')) pass('capabilities: tool-selection decision guide present');
+    else fail('capabilities: missing tool-selection decision guide');
     if (caps.TOOLS_BRIEF.includes('ANTI-LAZINESS RULE')) pass('capabilities: anti-laziness rule present');
     else fail('capabilities: missing anti-laziness rule');
     if (caps.TOOLS_BRIEF.includes('solve_visual_puzzle')) pass('capabilities: documents solve_visual_puzzle');

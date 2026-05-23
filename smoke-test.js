@@ -444,12 +444,14 @@ async function check(name, method, path, expectedStatus, body = null) {
     else fail('STRIP_RE: did not strip SCRAPE marker', `got "${stripped}"`);
 
     const caps = require('./src/utils/capabilities');
-    if (caps.MARKER === '<<CHAKA_TOOLS_v15>>') pass('capabilities: MARKER bumped to v15');
-    else fail('capabilities: MARKER not v15', caps.MARKER);
+    if (caps.MARKER === '<<CHAKA_TOOLS_v16>>') pass('capabilities: MARKER bumped to v16');
+    else fail('capabilities: MARKER not v16', caps.MARKER);
     if (caps.TOOLS_BRIEF.includes('HARD BOT-BLOCK')) pass('capabilities: hard bot-block section present');
     else fail('capabilities: missing hard bot-block section');
     if (caps.TOOLS_BRIEF.includes('WHICH WEB TOOL TO USE')) pass('capabilities: tool-selection decision guide present');
     else fail('capabilities: missing tool-selection decision guide');
+    if (caps.TOOLS_BRIEF.includes('[[RESEARCH:')) pass('capabilities: [[RESEARCH:]] marker documented');
+    else fail('capabilities: missing [[RESEARCH:]] marker doc');
     if (caps.TOOLS_BRIEF.includes('ANTI-LAZINESS RULE')) pass('capabilities: anti-laziness rule present');
     else fail('capabilities: missing anti-laziness rule');
     if (caps.TOOLS_BRIEF.includes('solve_visual_puzzle')) pass('capabilities: documents solve_visual_puzzle');
@@ -576,6 +578,65 @@ async function check(name, method, path, expectedStatus, body = null) {
     else fail('parseResponse: none case mismatch', JSON.stringify(r5));
   } catch (e) {
     fail('Phase5.6 visual puzzle tests', e.message);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Phase 6 — Deep research (Grok-style multi-source orchestrator)
+  // ──────────────────────────────────────────────────────────────────────
+  group = 'Phase6-Research';
+  try {
+    const research = require('./src/services/deepResearchService');
+    pass('deepResearchService: module loads');
+    if (typeof research.deepResearch === 'function') pass('deepResearchService: deepResearch() exported');
+    else fail('deepResearchService: deepResearch() missing');
+    if (typeof research.callLlm === 'function') pass('deepResearchService: callLlm() exported');
+    else fail('deepResearchService: callLlm() missing');
+    if (typeof research.safeJsonExtract === 'function') pass('deepResearchService: safeJsonExtract() exported');
+    else fail('deepResearchService: safeJsonExtract() missing');
+
+    // safeJsonExtract robustness
+    const j1 = research.safeJsonExtract('{"queries":["a","b"]}');
+    if (j1?.queries?.length === 2) pass('safeJsonExtract: pure JSON');
+    else fail('safeJsonExtract: pure JSON parse failed');
+    const j2 = research.safeJsonExtract('Here is the JSON: {"queries":["x"]} done!');
+    if (j2?.queries?.[0] === 'x') pass('safeJsonExtract: JSON embedded in prose');
+    else fail('safeJsonExtract: embedded JSON parse failed');
+    const j3 = research.safeJsonExtract('no json here', { queries: ['fallback'] });
+    if (j3?.queries?.[0] === 'fallback') pass('safeJsonExtract: returns fallback when no JSON');
+    else fail('safeJsonExtract: fallback failed');
+
+    require('./src/controllers/researchController');
+    pass('researchController: module loads');
+    require('./src/routes/researchRoutes');
+    pass('researchRoutes: module loads');
+  } catch (e) {
+    fail('Phase6 module load', e.message);
+  }
+
+  // Phase 6 frontend marker regex (mirrors agentic-vision.js)
+  try {
+    const RESEARCH_RE = /(?:\[\[|<<)RESEARCH:([\s\S]+?)(?:\]\]|>>)/i;
+    const cases = [
+      { in: 'On it.\n\n[[RESEARCH:find me everything about Ezinna Nweke]]', expect: 'find me everything about Ezinna Nweke' },
+      { in: '<<RESEARCH:dig up info on jomiez>>', expect: 'dig up info on jomiez' },
+      { in: '[[SCRAPE:https://example.com]]', expect: null },
+      { in: '[[HANDS:browse:example.com]]', expect: null },
+      { in: 'no marker here', expect: null },
+    ];
+    for (const c of cases) {
+      const m = c.in.match(RESEARCH_RE);
+      const got = m ? m[1].trim() : null;
+      if (got === c.expect) pass(`RESEARCH_RE: "${c.in.slice(0, 50)}"`);
+      else fail(`RESEARCH_RE: "${c.in.slice(0, 50)}"`, `expected ${c.expect}, got ${got}`);
+    }
+
+    // STRIP_RE should also strip RESEARCH markers
+    const STRIP_RE = /(?:\[\[|<<)(?:EYES:(?:webcam|screen|ocr)|HANDS:(?:browse|screenshot):[^\]>]+?|HANDS:agent:[\s\S]+?|SCRAPE:https?:\/\/[^\]>]+?|RESEARCH:[\s\S]+?)(?:\]\]|>>)/gi;
+    const stripped = '[[RESEARCH:find me X]] post text'.replace(STRIP_RE, '').trim();
+    if (stripped === 'post text') pass('STRIP_RE: strips [[RESEARCH:...]] markers');
+    else fail('STRIP_RE: did not strip RESEARCH marker', `got "${stripped}"`);
+  } catch (e) {
+    fail('Phase6 marker regex tests', e.message);
   }
 
   // ──────────────────────────────────────────────────────────────────────

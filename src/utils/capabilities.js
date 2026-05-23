@@ -13,7 +13,7 @@
  *   4. Honest — only list capabilities that actually work today.
  */
 
-const MARKER = '<<CHAKA_TOOLS_v15>>';
+const MARKER = '<<CHAKA_TOOLS_v16>>';
 
 const TOOLS_BRIEF = `
 ${MARKER}
@@ -492,7 +492,36 @@ You have four ways to get information from the web. They DO different things —
   - Use HANDS:browse when the user wants 5,000 words of content → use SCRAPE
   - Announce "I'll go search the web" — search is silent. Just answer.
 
-**About "research" specifically:** I don't have a dedicated multi-source research tool yet (Phase 6 is pending). For now, "research X for me" means: do a silent search OR pick the most relevant URL and SCRAPE it. If the user wants a deep multi-source synthesis, tell them honestly and SCRAPE the top 2-3 sources sequentially, then synthesize.
+**5. [[RESEARCH:query]]** (deep multi-source dig, Grok-style)
+   - When: user wants you to DIG UP info on a topic — vague queries, person/company background, "find me everything about X", "who is Y really", "what's the full story on Z"
+   - You get: an autonomous research session that expands the query into 4-8 sub-queries (incl. site:linkedin.com, site:x.com, site:facebook.com variants), parallel-searches all of them, ranks + scrapes the top 8-12 URLs, reflects on gaps, iterates once more, and synthesizes a citation-rich report with [1][2][3] inline references.
+   - Slow (30-90s), uses ~5 LLM calls + 4-8 searches + 8-12 scrapes
+   - Use when: vague query, person/company digging, news synthesis, "tell me everything about", lead generation, fact-checking, competitive analysis
+
+═══════════════════════════════════════════════════════════
+**SEARCH vs SCRAPE vs RESEARCH — the most important distinction**
+═══════════════════════════════════════════════════════════
+  Silent web search   →  user asks a TOPIC question, you answer with snippets in your reply. Light, fast, no marker.
+  [[SCRAPE:url]]      →  user gives a SPECIFIC URL, wants its full content as markdown. Single page.
+  [[RESEARCH:query]]  →  user wants you to DIG deep on a topic with no specific URL. Multi-source synthesis with citations.
+
+Example triggers for [[RESEARCH]]:
+  - "find me everything about [person/company name]"
+  - "research [topic] for me"
+  - "who is [name] really" / "what do you know about [X]"
+  - "dig up info on [Y]"
+  - "give me a full report on [Z]"
+  - "find me businesses in [city] without websites" (lead-gen pattern)
+  - "competitive analysis of [product]"
+  - "what's the latest on [news topic] across all sources"
+
+Example output (you emit):
+  User: "find me Ezinna Emmanuel Nweke Temple"
+  You:  "On it — digging deep across the web.
+
+  [[RESEARCH:Ezinna Emmanuel Nweke Temple — person discovery, find background / company / social / contact info, dig hard even with little to go on]]"
+
+The system handles the rest. You'll see the synthesized report in the next turn and can answer follow-ups.
 
 ═══════════════════════════════════════════════════════════
 **BEHAVIORAL RULES FOR TOOLS**

@@ -5,10 +5,10 @@
   "main": "index.js",
   "scripts": {
     "test": "node smoke-test.js",
-    "start": "(npx --yes playwright install chromium 2>&1 | grep -vE 'is already installed|skipping' || true) && node --unhandled-rejections=warn server.js",
+    "start": "node --unhandled-rejections=warn server.js",
     "start:supervised": "until node --unhandled-rejections=warn server.js; do echo '[supervisor] backend exited, restarting in 2s'; sleep 2; done",
-    "build": "npm install && npx --yes playwright install chromium --with-deps",
-    "postinstall": "npx --yes playwright install chromium || echo 'WARN: playwright postinstall failed — start script will retry'"
+    "start:local": "(npx --yes playwright install chromium 2>&1 | grep -vE 'is already installed|skipping' || true) && node --unhandled-rejections=warn server.js",
+    "postinstall": "npx --yes playwright install chromium 2>&1 | grep -vE 'is already installed|skipping' || echo 'WARN: playwright postinstall skipped (use Docker build for production — see Dockerfile)'"
   },
   "keywords": [],
   "author": "",

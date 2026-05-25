@@ -1,0 +1,54 @@
+# Don't ship these into the Docker image — Render injects env vars at
+# runtime + we don't want secrets baked into the image layer cache.
+
+# Node
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Secrets — Render env vars cover these
+.env
+.env.local
+.env.*.local
+.env.production
+chakachaka-e672a-firebase-adminsdk-fbsvc-*.json
+firebase-service-account.json
+*.pem
+*.key
+
+# Per-user browser profiles (sessions persist on disk locally, not in cloud)
+user-data/
+
+# Local SQLite + logs
+local.db
+*.log
+ngrok.log
+server.log
+
+# Temp / cache
+*.tmp
+*.bak
+.cache/
+.tmp/
+
+# Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+
+# Git + CI
+.git
+.gitignore
+.github/
+.claude/
+
+# Throwaway test scripts
+test-*.js
+
+# Docs that don't need to ship to prod
+README*.md
+CHAKA_*.md
+
+# Audio temp files left by TTS service
+src/services/temp_*.mp3

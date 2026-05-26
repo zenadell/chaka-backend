@@ -28,9 +28,14 @@ async function handleResearch(req, res) {
     } catch { /* client disconnected */ }
   };
 
+  // Client-disconnect detection: must use res.on('close'), NOT req.on('close').
+  // req.on('close') fires when Express's body parser finishes draining the
+  // request stream (i.e. right after the JSON body is read) — which would
+  // abort the research before it even starts. res.on('close') fires when
+  // the underlying socket actually closes (client navigated away / page reload).
   let closed = false;
   const abortController = new AbortController();
-  req.on('close', () => { closed = true; abortController.abort(); });
+  res.on('close', () => { closed = true; abortController.abort(); });
 
   // Heartbeat — research can have long quiet stretches during scrape/LLM
   let lastEventTs = Date.now();

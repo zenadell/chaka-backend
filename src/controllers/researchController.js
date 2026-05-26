@@ -71,14 +71,24 @@ async function handleResearch(req, res) {
   }
 }
 
-// GET /api/research/status
+// GET /api/research/status — reports which providers have keys + source
 function status(req, res) {
+  const apiKeyManager = require('../utils/apiKeyManager');
+  const types = ['cerebras', 'sambanova', 'groq', 'openrouter', 'together'];
+  const providers = types.map(t => {
+    const adminCount = apiKeyManager.getKeysByType?.(t)?.length || 0;
+    const envSet = !!(process.env[`${t.toUpperCase()}_API_KEY`] || '').trim();
+    if (adminCount) return `${t}(admin×${adminCount})`;
+    if (envSet)     return `${t}(env)`;
+    return null;
+  }).filter(Boolean);
+
   res.json({
     ok: true,
     phase: 6,
     service: 'deep-research',
-    providers: ['cerebras', 'sambanova', 'groq', 'openrouter'].filter(p => !!process.env[`${p.toUpperCase()}_API_KEY`]),
-    search:    !!require('../utils/apiKeyManager').keys?.find(k => k.type === 'search')?.key,
+    providers,
+    search: !!apiKeyManager.keys?.find(k => k.type === 'search')?.key,
   });
 }
 

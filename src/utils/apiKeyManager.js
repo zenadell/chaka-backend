@@ -119,6 +119,22 @@ class ApiKeyManager {
     return mmKeys[this.currentLiveIndex];
   }
 
+  // Phase 5.7+: generic helper for any provider type.
+  // Returns an array of { id, key, type } for all enabled keys matching `type`.
+  // Used by stagehandService + deepResearchService to load groq/cerebras/
+  // sambanova/openrouter keys from admin → Turso instead of Render env vars.
+  getKeysByType(type) {
+    return this.keys.filter(k => k.type === type && k.key);
+  }
+
+  // Pick one key for a provider — random rotation if multiple are present,
+  // so the load is spread across the pool without state.
+  pickKey(type) {
+    const pool = this.getKeysByType(type);
+    if (!pool.length) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
   // Rotates whatever keys the Live Proxy is attempting to use
   rotateLiveProxyKeys() {
     const ttsKeys = this.keys.filter(k => k.type === 'tts');

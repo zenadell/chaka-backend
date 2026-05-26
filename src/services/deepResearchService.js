@@ -36,11 +36,23 @@ const PROVIDERS = [
 
 const cooldowns = new Map(); // provider name → epoch ms when available again
 
+// Resolve a provider's API key — prefer admin-managed (Turso config table
+// via apiKeyManager) over env var, so keys rotate live without redeploy.
+function _resolveKey(p) {
+  try {
+    const apiKeyManager = require('../utils/apiKeyManager');
+    const adminKey = apiKeyManager.pickKey?.(p.name)?.key;
+    if (adminKey) return adminKey;
+  } catch {}
+  return (process.env[p.keyEnv] || '').trim() || null;
+}
+
 async function callLlm(systemPrompt, userPrompt, opts = {}) {
   const now = Date.now();
-  const available = PROVIDERS.filter(p => process.env[p.keyEnv] && (cooldowns.get(p.name) || 0) <= now);
-  const tryOrder = available.length ? available : PROVIDERS.filter(p => process.env[p.keyEnv]);
-  if (!tryOrder.length) throw new Error('No LLM providers configured for research');
+  const withKeys = PROVIDERS.map(p => ({ ...p, _key: _resolveKey(p) })).filter(p => p._key);
+  const available = withKeys.filter(p => (cooldowns.get(p.name) || 0) <= now);
+  const tryOrder = available.length ? available : withKeys;
+  if (!tryOrder.length) throw new Error('No LLM providers configured for research (set keys via Chaka Admin or env vars)');
 
   let lastErr;
   for (const p of tryOrder) {
@@ -56,7 +68,7 @@ async function callLlm(systemPrompt, userPrompt, opts = {}) {
         ...(opts.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
       }, {
         headers: {
-          'Authorization': 'Bearer ' + process.env[p.keyEnv],
+          'Authorization': 'Bearer ' + p._key,
           'Content-Type':  'application/json',
           ...(p.extraHeaders || {}),
         },

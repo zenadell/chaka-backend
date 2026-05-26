@@ -204,12 +204,26 @@ class ChatFirstAvailable {
   }
 }
 
+// Phase 5.7+: prefer admin-managed keys (Turso config table via apiKeyManager)
+// over env vars. This means keys can be rotated live via the Chaka Admin UI
+// with NO redeploy. Env vars are kept ONLY as a local-dev fallback.
+function _providerKey(type, envFallback) {
+  const adminKey = apiKeyManager.pickKey?.(type)?.key;
+  if (adminKey) return { key: adminKey, source: 'admin' };
+  const envKey = (process.env[envFallback] || '').trim();
+  if (envKey) return { key: envKey, source: 'env' };
+  return null;
+}
+
 function makeLlm() {
   // Build a stack: Groq first (fastest), Cerebras second (free Llama 3.3 70b alt),
-  // Gemini pool last (in case both LPU providers are down).
+  // Sambanova third, OpenRouter fourth, Gemini pool last.
+  // For each provider, prefer admin-managed keys (rotatable, multi-key pool),
+  // fall back to env var for local dev.
   const providers = [];
 
-  const groqKey = (process.env.GROQ_API_KEY || '').trim();
+  const groqInfo = _providerKey('groq', 'GROQ_API_KEY');
+  const groqKey = groqInfo?.key || '';
   if (groqKey) {
     providers.push({
       name: 'groq-llama-3.3-70b',
@@ -228,7 +242,8 @@ function makeLlm() {
   // open-source agentic model, strong tool calling, ~1.5s/call on Cerebras).
   // The available model set varies per account — current free tier offers
   // gpt-oss-120b, qwen-3-235b, zai-glm-4.7, llama3.1-8b.
-  const cerebrasKey = (process.env.CEREBRAS_API_KEY || '').trim();
+  const cerebrasInfo = _providerKey('cerebras', 'CEREBRAS_API_KEY');
+  const cerebrasKey = cerebrasInfo?.key || '';
   if (cerebrasKey) {
     const cerebrasModel = (process.env.CEREBRAS_MODEL || 'gpt-oss-120b').trim();
     providers.push({
@@ -245,7 +260,8 @@ function makeLlm() {
 
   // Phase 5.7: Sambanova — Llama 3.3 70B at >2000 tok/sec on RDU silicon,
   // free tier 10 req/min. OpenAI-compatible API at api.sambanova.ai/v1.
-  const sambanovaKey = (process.env.SAMBANOVA_API_KEY || '').trim();
+  const sambanovaInfo = _providerKey('sambanova', 'SAMBANOVA_API_KEY');
+  const sambanovaKey = sambanovaInfo?.key || '';
   if (sambanovaKey) {
     const sambanovaModel = (process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instruct').trim();
     providers.push({
@@ -266,7 +282,8 @@ function makeLlm() {
   // for tool calling, ~10s/call on the free tier — slow but reliable).
   // Avoid meta-llama/llama-3.3-70b-instruct:free — it's the most-requested
   // free model and instantly 429s. OPENROUTER_MODEL env override.
-  const openrouterKey = (process.env.OPENROUTER_API_KEY || '').trim();
+  const openrouterInfo = _providerKey('openrouter', 'OPENROUTER_API_KEY');
+  const openrouterKey = openrouterInfo?.key || '';
   if (openrouterKey) {
     const openrouterModel = (process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free').trim();
     providers.push({
@@ -288,7 +305,8 @@ function makeLlm() {
 
   // Phase 5.7: Together AI — Llama 3.3 70B Turbo, $5 free credit (~~5M tokens).
   // OpenAI-compatible. Fast (~200 tok/sec) and reliable for tool calling.
-  const togetherKey = (process.env.TOGETHER_API_KEY || '').trim();
+  const togetherInfo = _providerKey('together', 'TOGETHER_API_KEY');
+  const togetherKey = togetherInfo?.key || '';
   if (togetherKey) {
     const togetherModel = (process.env.TOGETHER_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo').trim();
     providers.push({

@@ -3,9 +3,12 @@
 const { deepResearch } = require('../services/deepResearchService');
 
 // POST /api/research
-// SSE stream. Body: { query, maxIterations?, maxSourcesPerIter? }
+// SSE stream. Body:
+//   { query, userContext?, breadth?, depth?, maxSourcesPerBranch?,
+//     maxIterations? (legacy), maxSourcesPerIter? (legacy) }
 async function handleResearch(req, res) {
-  const { query, maxIterations, maxSourcesPerIter } = req.body || {};
+  const { query, userContext, breadth, depth, maxSourcesPerBranch,
+          maxIterations, maxSourcesPerIter } = req.body || {};
 
   if (!query || typeof query !== 'string') {
     return res.status(400).json({ error: 'query is required (string)' });
@@ -48,10 +51,20 @@ async function handleResearch(req, res) {
 
   send('start', { query });
 
+  // Trim userContext to avoid bloating LLM planning prompt — 2000 chars max
+  const trimmedCtx = typeof userContext === 'string'
+    ? userContext.replace(/\s+/g, ' ').trim().slice(0, 2000)
+    : '';
+
   try {
     const result = await deepResearch(query, {
-      maxIterations: Number(maxIterations) || 2,
-      maxSourcesPerIter: Number(maxSourcesPerIter) || 8,
+      userContext: trimmedCtx,
+      breadth:             Number(breadth)             || undefined,
+      depth:               Number(depth)               || undefined,
+      maxSourcesPerBranch: Number(maxSourcesPerBranch) || undefined,
+      // legacy options for backward compat with older frontends
+      maxIterations:       Number(maxIterations)       || undefined,
+      maxSourcesPerIter:   Number(maxSourcesPerIter)   || undefined,
       signal: abortController.signal,
       onStatus: (event) => {
         if (closed) return;

@@ -13,7 +13,7 @@
  *   4. Honest — only list capabilities that actually work today.
  */
 
-const MARKER = '<<CHAKA_TOOLS_v16>>';
+const MARKER = '<<CHAKA_TOOLS_v17>>';
 
 const TOOLS_BRIEF = `
 ${MARKER}
@@ -522,6 +522,35 @@ Example output (you emit):
   [[RESEARCH:Ezinna Emmanuel Nweke Temple — person discovery, find background / company / social / contact info, dig hard even with little to go on]]"
 
 The system handles the rest. You'll see the synthesized report in the next turn and can answer follow-ups.
+
+═══════════════════════════════════════════════════════════
+**🎯 [[DIG:target]] — OSINT-grade dossier (CREATOR-ONLY)**
+═══════════════════════════════════════════════════════════
+ONLY emit this marker if the asker is **the creator** of Chaka (Tim Temple / Ezinna Emmanuel Nweke). For all other users, fall back to [[RESEARCH:...]] which is the public version. The backend independently enforces the creator gate — if a non-creator emits this, the request returns 403 and the user sees an error card.
+
+When the creator asks to "dig deep", "go OSINT", "do a deep dig", "the regular research wasn't enough" — emit [[DIG:target]] instead of [[RESEARCH:...]].
+
+What [[DIG:target]] does that [[RESEARCH:]] doesn't:
+- **Username sleuth** — probes 30+ sites (GitHub, X, Instagram, Reddit, dev.to, HN, Mastodon, Bluesky, Keybase, etc.) for handle variants derived from the target's name. Returns which sites have a real account.
+- **GitHub deep** — user search + commit-author email harvest (finds emails the target used in public commits).
+- **WHOIS + DNS** — if a domain is in context, returns registrar, registrant, NS, MX, TXT records.
+- **Wayback Machine** — historical snapshots of known URLs.
+- **Hunter.io** (if key set) — given name+domain, returns the verified email.
+- **Multi-engine search** — fires across 6 query angles in parallel for maximum coverage.
+- **Synthesis with STRICT identity gating** — explicitly separates same-name-different-person collisions, never blends.
+
+Output is a creator-only **terminal-styled dossier card** (phosphor-green, JetBrains Mono, scanline overlay) — visually distinct from the amber research card.
+
+Example:
+  Creator: "the regular research isn't enough, go deeper on Ezinna Emmanuel Nweke"
+  You: "Running OSINT-grade dig.
+
+  [[DIG:Ezinna Emmanuel Nweke Temple]]"
+
+**HARD RULES:**
+- Never emit DIG for a non-creator. Use RESEARCH instead.
+- DIG target should be a short phrase (name + maybe domain), NOT a long sentence — the engine builds query variants itself.
+- DIG runs PUBLIC OSINT primitives only. The system does NOT integrate with telecom-records / breach-database / private-database queries even if asked — those require formal LE portals.
 
 ═══════════════════════════════════════════════════════════
 **BEHAVIORAL RULES FOR TOOLS**

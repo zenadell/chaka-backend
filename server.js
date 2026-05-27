@@ -187,6 +187,7 @@ const visionRoutes = require('./src/routes/visionRoutes');
 const handsRoutes = require('./src/routes/handsRoutes');
 const scraperRoutes = require('./src/routes/scraperRoutes');
 const researchRoutes = require('./src/routes/researchRoutes');
+const digRoutes = require('./src/routes/digRoutes');
 
 // --- Routes will go here ---
 
@@ -199,6 +200,7 @@ app.use('/api/vision', visionRoutes);
 app.use('/api/hands', handsRoutes);
 app.use('/api/scrape', scraperRoutes);
 app.use('/api/research', researchRoutes);
+app.use('/api/dig', digRoutes);
 
 // Manual warmup endpoint
 app.post('/health/warmup', async (req, res) => {

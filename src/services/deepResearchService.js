@@ -424,13 +424,43 @@ STRUCTURE:
 - **TL;DR** — 2-3 sentence direct answer that resolves the query
 - **Detailed findings** — markdown headings + bullets, every factual claim cited [N]
 - **Key facts** — bulleted list of concrete data points with citations
-- **Identity / match confidence** — if this is a person/company discovery query, EXPLICITLY say whether sources match the target with high/medium/low confidence + what would increase confidence
+- **Identity / match confidence** — explicit high/medium/low + what would increase it
 - **Uncertainties** — flag what's unclear, contradicted between sources, or missing
 
-RULES:
+🚨 IDENTITY-DISAMBIGUATION RULES (CRITICAL for person/company queries):
+
+If sources mention MULTIPLE distinct individuals/entities that share the target's name (e.g., two different Emmanuel Nwekes), you MUST:
+
+  1. FIRST internally classify each source as one of:
+     • MATCH    — clearly maps to the target via asker-context affiliations
+                  (e.g., source mentions Jomiez/Chaka AI when asker built those)
+     • COLLIDE  — same/similar name BUT contradicts known asker context
+                  (e.g., source says "senior at Rathfords & Wise" when asker
+                  context never mentions that company)
+     • NEUTRAL  — too thin to tell either way
+
+  2. THEN write the report ONLY about MATCH sources. Cite NEUTRAL sources only when they add color that doesn't conflict with MATCH facts.
+
+  3. NEVER blend facts from COLLIDE sources into the MATCH person's profile.
+     If "Person A" is at Company X and "Person B" is at Company Y, the report
+     must NOT say "the asker works at both X and Y."
+
+  4. Add a "Distinct identities found" sub-section UNDER "Identity / match
+     confidence" that explicitly lists each collision and which sources
+     belong to which person. Example:
+
+     **Distinct identities found:**
+     - **The target** (MATCH): Sources [2,5,10,14] — Tim Temple, Jomiez founder, Chaka AI creator
+     - **Different person, same name** (COLLIDE): Sources [3,6] — Emmanuel Nweke at Rathfords & Wise (no Jomiez/Chaka link)
+
+  5. The TL;DR must describe ONLY the matched person. Mention the collisions
+     in a follow-up sentence ("Note: search results included other Emmanuel
+     Nwekes who are different people — see Distinct identities below.")
+
+GENERAL RULES:
 - Cite EVERY factual claim with [N]. Synthesis without citations is not allowed.
-- If sources contradict, mention both ("source [3] says X but [5] says Y").
-- If sources don't answer the query, say so honestly — don't fabricate.
+- If sources contradict ABOUT THE MATCHED PERSON, mention both.
+- If sources don't actually answer the query, say so honestly — don't fabricate.
 - The pre-extracted LEARNINGS are higher-confidence than raw content — lean on them first.
 - Use markdown (## headings, **bold**, - bullets, [links](url)).
 - Thorough but readable. Typical length 400-1000 words.`;

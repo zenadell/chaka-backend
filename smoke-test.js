@@ -444,8 +444,10 @@ async function check(name, method, path, expectedStatus, body = null) {
     else fail('STRIP_RE: did not strip SCRAPE marker', `got "${stripped}"`);
 
     const caps = require('./src/utils/capabilities');
-    if (caps.MARKER === '<<CHAKA_TOOLS_v16>>') pass('capabilities: MARKER bumped to v16');
-    else fail('capabilities: MARKER not v16', caps.MARKER);
+    if (caps.MARKER === '<<CHAKA_TOOLS_v17>>') pass('capabilities: MARKER bumped to v17');
+    else fail('capabilities: MARKER not v17', caps.MARKER);
+    if (caps.TOOLS_BRIEF.includes('[[DIG:')) pass('capabilities: [[DIG:]] creator-only marker documented');
+    else fail('capabilities: missing [[DIG:]] marker doc');
     if (caps.TOOLS_BRIEF.includes('HARD BOT-BLOCK')) pass('capabilities: hard bot-block section present');
     else fail('capabilities: missing hard bot-block section');
     if (caps.TOOLS_BRIEF.includes('WHICH WEB TOOL TO USE')) pass('capabilities: tool-selection decision guide present');
@@ -630,13 +632,76 @@ async function check(name, method, path, expectedStatus, body = null) {
       else fail(`RESEARCH_RE: "${c.in.slice(0, 50)}"`, `expected ${c.expect}, got ${got}`);
     }
 
-    // STRIP_RE should also strip RESEARCH markers
-    const STRIP_RE = /(?:\[\[|<<)(?:EYES:(?:webcam|screen|ocr)|HANDS:(?:browse|screenshot):[^\]>]+?|HANDS:agent:[\s\S]+?|SCRAPE:https?:\/\/[^\]>]+?|RESEARCH:[\s\S]+?)(?:\]\]|>>)/gi;
+    // STRIP_RE should also strip RESEARCH + DIG markers
+    const STRIP_RE = /(?:\[\[|<<)(?:EYES:(?:webcam|screen|ocr)|HANDS:(?:browse|screenshot):[^\]>]+?|HANDS:agent:[\s\S]+?|SCRAPE:https?:\/\/[^\]>]+?|RESEARCH:[\s\S]+?|DIG:[\s\S]+?)(?:\]\]|>>)/gi;
     const stripped = '[[RESEARCH:find me X]] post text'.replace(STRIP_RE, '').trim();
     if (stripped === 'post text') pass('STRIP_RE: strips [[RESEARCH:...]] markers');
     else fail('STRIP_RE: did not strip RESEARCH marker', `got "${stripped}"`);
+    const stripped2 = '[[DIG:Sam Altman]] body text'.replace(STRIP_RE, '').trim();
+    if (stripped2 === 'body text') pass('STRIP_RE: strips [[DIG:...]] markers');
+    else fail('STRIP_RE: did not strip DIG marker', `got "${stripped2}"`);
   } catch (e) {
     fail('Phase6 marker regex tests', e.message);
+  }
+
+  // ──────────────────────────────────────────────────────────────────────
+  // Phase 8 — Deep Dig (OSINT, creator-only)
+  // ──────────────────────────────────────────────────────────────────────
+  group = 'Phase8-DeepDig';
+  try {
+    const dig = require('./src/services/deepDigService');
+    pass('deepDigService: module loads');
+    if (typeof dig.deepDig === 'function') pass('deepDigService: deepDig() exported');
+    else fail('deepDigService: deepDig() missing');
+    if (typeof dig.buildHandleCandidates === 'function') pass('deepDigService: buildHandleCandidates() exported');
+    else fail('deepDigService: buildHandleCandidates() missing');
+
+    const cands = dig.buildHandleCandidates('Ezinna Emmanuel Nweke');
+    if (cands.length >= 4 && cands.includes('ezinnaemmanuelnweke')) pass('buildHandleCandidates: produces concatenated handle');
+    else fail('buildHandleCandidates: missing concatenated handle', JSON.stringify(cands));
+    if (cands.includes('ezinna.emmanuel.nweke') || cands.includes('ezinna_emmanuel_nweke')) pass('buildHandleCandidates: produces delimited variants');
+    else fail('buildHandleCandidates: missing delimited variants');
+
+    const ctrl = require('./src/controllers/deepDigController');
+    pass('deepDigController: module loads');
+    if (typeof ctrl.handleDig === 'function') pass('deepDigController: handleDig() exported');
+    if (typeof ctrl.isCreator === 'function') pass('deepDigController: isCreator() exported');
+
+    // Creator-gate is closed when CREATOR_UIDS is empty
+    const savedUids = process.env.CREATOR_UIDS;
+    process.env.CREATOR_UIDS = '';
+    if (!ctrl.isCreator('any-uid')) pass('isCreator: closed when CREATOR_UIDS empty');
+    else fail('isCreator: should reject when no creators configured');
+    // Creator-gate opens for whitelisted UIDs
+    process.env.CREATOR_UIDS = 'uid1,uid2,uid3';
+    if (ctrl.isCreator('uid2')) pass('isCreator: opens for whitelisted UID');
+    else fail('isCreator: should accept whitelisted UID');
+    if (!ctrl.isCreator('uid99')) pass('isCreator: rejects non-whitelisted UID');
+    else fail('isCreator: should reject non-whitelisted UID');
+    process.env.CREATOR_UIDS = savedUids || '';
+
+    require('./src/routes/digRoutes');
+    pass('digRoutes: module loads');
+  } catch (e) {
+    fail('Phase8 deep-dig tests', e.message);
+  }
+
+  try {
+    const DIG_RE = /(?:\[\[|<<)DIG:([\s\S]+?)(?:\]\]|>>)/i;
+    const cases = [
+      { in: 'On it.\n\n[[DIG:Ezinna Nweke jomiez.com]]', expect: 'Ezinna Nweke jomiez.com' },
+      { in: '<<DIG:Sam Altman OpenAI>>', expect: 'Sam Altman OpenAI' },
+      { in: '[[RESEARCH:not a dig]]', expect: null },
+      { in: 'plain text', expect: null },
+    ];
+    for (const c of cases) {
+      const m = c.in.match(DIG_RE);
+      const got = m ? m[1].trim() : null;
+      if (got === c.expect) pass(`DIG_RE: "${c.in.slice(0, 40)}"`);
+      else fail(`DIG_RE: "${c.in.slice(0, 40)}"`, `expected ${c.expect}, got ${got}`);
+    }
+  } catch (e) {
+    fail('Phase8 marker regex', e.message);
   }
 
   // ──────────────────────────────────────────────────────────────────────

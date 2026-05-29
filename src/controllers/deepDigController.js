@@ -12,10 +12,17 @@
 
 const { deepDig } = require('../services/deepDigService');
 
-// Hard gate: only these Firebase UIDs may invoke a deep dig.
+// Hard gate: only these Firebase UIDs or specific emails may invoke a deep dig.
 // Configured via CREATOR_UIDS=uid1,uid2,uid3 in env.
-function isCreator(uid) {
+function isCreator(userOrUid) {
+  if (!userOrUid) return false;
+  
+  // Allow the creator's email address as a fallback
+  if (userOrUid.email === 'timtemple2024@gmail.com') return true;
+
+  const uid = typeof userOrUid === 'string' ? userOrUid : userOrUid.uid;
   if (!uid) return false;
+  
   const allowed = (process.env.CREATOR_UIDS || '').split(',').map(s => s.trim()).filter(Boolean);
   if (!allowed.length) return false;
   return allowed.includes(uid);
@@ -25,8 +32,8 @@ function isCreator(uid) {
 // SSE. Body: { target, userContext?, knownDomain?, knownEmail? }
 // Auth: req.user.uid must be in CREATOR_UIDS (Firebase middleware sets req.user).
 async function handleDig(req, res) {
-  const uid = req.user?.uid || req.headers['x-user-id'];
-  if (!isCreator(uid)) {
+  const userOrUid = req.user || req.headers['x-user-id'];
+  if (!isCreator(userOrUid)) {
     return res.status(403).json({ error: 'forbidden — creator-only endpoint' });
   }
 
@@ -116,12 +123,12 @@ async function handleDig(req, res) {
 
 // GET /api/dig/status — is the dig service available for this caller?
 function status(req, res) {
-  const uid = req.user?.uid || req.headers['x-user-id'];
+  const userOrUid = req.user || req.headers['x-user-id'];
   res.json({
     ok: true,
     phase: 8,
     service: 'deep-dig',
-    available: isCreator(uid),
+    available: isCreator(userOrUid),
     primitives: ['username_sleuth', 'github', 'whois', 'wayback', 'hunter', 'deep_search'],
     creator_uids_configured: (process.env.CREATOR_UIDS || '').split(',').filter(Boolean).length,
   });

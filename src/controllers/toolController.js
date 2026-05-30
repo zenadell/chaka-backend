@@ -531,14 +531,20 @@ When using the search_web tool, do not announce that you are searching. Simply c
 **VISION CONTROL (CRITICAL — use the set_vision tool):**
 At the start of this conversation your eyes are OFF — you are not watching anything. The moment the user expresses any intent for you to see, you MUST call the set_vision tool. You will then start receiving live video frames and can describe what you're seeing in real time.
 
+You have access to BOTH front (selfie) and back (rear/environment) cameras on the user's device. Use the camera_facing parameter to control which camera is used:
+- "user" = front-facing / selfie camera (default — for seeing the user's face)
+- "environment" = back / rear camera (for seeing what's in front of the device — objects, surroundings, documents, etc.)
+
 Patterns to recognize and the call you make:
-- "look at me" / "can you see me?" / "see me through the camera" → set_vision({ webcam: true, screen: false, reason: "user wants me to see them" })
+- "look at me" / "can you see me?" / "see me through the camera" → set_vision({ webcam: true, screen: false, camera_facing: "user", reason: "user wants me to see them" })
+- "use your back camera" / "switch to rear camera" / "look at what's in front of me" / "see what I'm pointing at" / "scan this" → set_vision({ webcam: true, screen: false, camera_facing: "environment", reason: "user wants me to see through the back camera" })
+- "switch to front camera" / "use the selfie camera" / "look at me instead" → set_vision({ webcam: true, screen: false, camera_facing: "user", reason: "switching to front camera" })
 - "watch my screen" / "look at my code" / "see what I'm working on" → set_vision({ webcam: false, screen: true, reason: "user wants me to watch their screen" })
 - "watch both" / "see me and my screen" → set_vision({ webcam: true, screen: true, reason: "user wants me to watch both feeds" })
 - "stop watching" / "close your eyes" / "stop looking" / "you can stop seeing now" → set_vision({ webcam: false, screen: false, reason: "user wants me to stop watching" })
 - "switch to my screen instead" (if webcam was on) → set_vision({ webcam: false, screen: true, reason: "switching from webcam to screen" })
 
-After calling set_vision, briefly narrate naturally — e.g., "Okay, looking at you now..." or "Alright, watching your screen." Never describe what you see UNTIL you've actually received frames (you'll naturally see them streaming in). If the user has not asked you to look, do NOT call set_vision unprompted.
+After calling set_vision, briefly narrate naturally — e.g., "Okay, looking at you now..." or "Alright, switching to the back camera." Never describe what you see UNTIL you've actually received frames (you'll naturally see them streaming in). If the user has not asked you to look, do NOT call set_vision unprompted.
 
 CRITICAL INSTRUCTION: If the user explicitly says goodbye, bids farewell, or clearly ends the conversation, you MUST call the "end_conversation" tool IMMEDIATELY after giving your final goodbye response. Do NOT leave the conversation open.
 
@@ -589,7 +595,7 @@ ${birthdayInjection}
                         },
                         {
                             name: "set_vision",
-                            description: "Turn your vision system on or off during this live voice conversation. Call this tool whenever the user expresses any intent for you to see something — examples: 'look at me', 'watch my screen', 'see what I'm doing', 'I want to show you something', 'can you see this', 'look at my code', 'watch both', etc. After calling this tool, briefly tell the user what you're doing (e.g., 'Okay, looking now...'). When the user says 'stop watching', 'close your eyes', 'enough', or similar — call this with both webcam=false and screen=false. Default state on connect is BOTH OFF.",
+                            description: "Turn your vision system on or off during this live voice conversation. Call this tool whenever the user expresses any intent for you to see something — examples: 'look at me', 'watch my screen', 'see what I'm doing', 'I want to show you something', 'can you see this', 'look at my code', 'watch both', 'use your back camera', 'switch to rear camera', etc. After calling this tool, briefly tell the user what you're doing (e.g., 'Okay, looking now...'). When the user says 'stop watching', 'close your eyes', 'enough', or similar — call this with both webcam=false and screen=false. Default state on connect is BOTH OFF. You can also switch between front and back cameras using the camera_facing parameter.",
                             parameters: {
                                 type: "object",
                                 properties: {
@@ -600,6 +606,11 @@ ${birthdayInjection}
                                     screen: {
                                         type: "boolean",
                                         description: "True to watch the user's screen, false to stop watching the screen."
+                                    },
+                                    camera_facing: {
+                                        type: "string",
+                                        enum: ["user", "environment"],
+                                        description: "Which camera to use: 'user' for the front/selfie camera (default — to see the user's face), or 'environment' for the back/rear camera (to see what the user is pointing the device at — objects, documents, surroundings). Only relevant when webcam=true."
                                     },
                                     reason: {
                                         type: "string",

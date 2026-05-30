@@ -548,6 +548,13 @@ After calling set_vision, briefly narrate naturally — e.g., "Okay, looking at 
 
 CRITICAL INSTRUCTION: If the user explicitly says goodbye, bids farewell, or clearly ends the conversation, you MUST call the "end_conversation" tool IMMEDIATELY after giving your final goodbye response. Do NOT leave the conversation open.
 
+**DEEP AGENTS (deep_research, deep_dig, agentic_hands):**
+These tools are powerful but take several minutes to run. They execute asynchronously in the background.
+1. SPELLING CONFIRMATION: Before triggering a deep agent on a specific target (like a person's name, email, or a complex search term), you MUST verbally confirm the spelling with the user to ensure the speech-to-text heard them correctly.
+2. DISPATCH: When you call the tool, immediately tell the user "I've started that in the background, it will take a few minutes."
+3. WAIT: You can continue talking to the user while it runs.
+4. COMPLETION: When the agent finishes, the system will inject the results into your context via a SYSTEM message. Once you receive that message, summarize the findings for the user.
+
 ${birthdayInjection}
 `.trim();
 
@@ -632,6 +639,48 @@ ${birthdayInjection}
                                     }
                                 },
                                 required: ["reason"]
+                            }
+                        },
+                        {
+                            name: "deep_research",
+                            description: "Dispatches the Deep Research agent to investigate a complex topic in the background. Run this when the user asks for a 'deep research', 'comprehensive report', or asks a very complex question that requires synthesizing multiple sources. It takes several minutes to complete.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    query: {
+                                        type: "string",
+                                        description: "The topic or question to research deeply. Make sure you confirmed spelling first!"
+                                    }
+                                },
+                                required: ["query"]
+                            }
+                        },
+                        {
+                            name: "deep_dig",
+                            description: "Dispatches the Deep Dig (OSINT) agent in the background to investigate a person, username, or email address. Takes several minutes. ALWAYS confirm spelling before running this.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    target: {
+                                        type: "string",
+                                        description: "The name, username, or email to dig into."
+                                    }
+                                },
+                                required: ["target"]
+                            }
+                        },
+                        {
+                            name: "agentic_hands",
+                            description: "Dispatches the Agentic Hands browser automation tool in the background to navigate a website, click things, or extract data dynamically. Takes a few minutes.",
+                            parameters: {
+                                type: "object",
+                                properties: {
+                                    prompt: {
+                                        type: "string",
+                                        description: "The instruction for the browser agent (e.g. 'go to target.com and find the price of X')."
+                                    }
+                                },
+                                required: ["prompt"]
                             }
                         }
                     ]

@@ -53,7 +53,10 @@ exports.handleAgent = async (req, res) => {
     }
   }
 
-  send('start', { task, mode: mode || 'hybrid', startUrl: startUrl || null, hasCredentials: Object.keys(variables).length > 0 });
+  // Get the actual model name for the frontend badge
+  const modelName = stagehand.getActiveModelName?.() || 'gemini-2.5-flash';
+
+  send('start', { task, mode: mode || 'hybrid', startUrl: startUrl || null, hasCredentials: Object.keys(variables).length > 0, modelName });
 
   // Track whether we've already emitted a 2FA/captcha alert this run so
   // we don't spam the user with the same event on every step.

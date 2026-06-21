@@ -81,13 +81,32 @@ Examples:
 
 /**
  * Generate a smart chat title
- * Priority: 1) Existing Gemini keys (zero config) → 2) Groq → 3) Heuristic
+ * Priority: 1) Admin-defined title/groq key → 2) Existing Gemini keys → 3) Heuristic
  */
 async function generateChatTitle(userMessage, botResponse) {
-  // Strategy 1: Use existing Gemini API keys (already loaded in apiKeyManager)
   const apiKeyManager = require('../utils/apiKeyManager');
-  const keyObj = apiKeyManager.getCurrentKey();
   
+  // Ensure we have the latest keys from admin
+  await apiKeyManager.reloadConfig();
+
+  // Strategy 1: Use dedicated title generation key from admin (gemma-4-26b-a4b-it)
+  const titleKeyObj = apiKeyManager.getTitleKey();
+  if (titleKeyObj && titleKeyObj.key) {
+    try {
+      // Use the Google AI API with the specific Gemma model
+      const title = await generateTitleWithGoogleGemma(titleKeyObj.key, userMessage, 'gemma-4-26b-a4b-it');
+      if (title && title.length >= 2) {
+        console.log(`✅ Title generated via dedicated key: "${title}"`);
+        return title;
+      }
+    } catch (e) {
+      const errDetail = e.response ? JSON.stringify(e.response.data).substring(0, 300) : e.message;
+      console.warn('Dedicated title gen failed:', errDetail);
+    }
+  }
+
+  // Strategy 2: Fallback to existing Gemini API keys
+  const keyObj = apiKeyManager.getCurrentKey();
   if (keyObj && keyObj.key) {
     try {
       const title = await generateTitleWithGemini(keyObj.key, userMessage);
@@ -101,17 +120,17 @@ async function generateChatTitle(userMessage, botResponse) {
     }
   }
 
-  // Strategy 2: Try Groq if API key is set
+  // Strategy 3: Try fallback groq key from env
   const groqKey = process.env.GROQ_API_KEY;
   if (groqKey) {
     try {
-      const title = await generateTitleWithGroq(groqKey, userMessage);
+      const title = await generateTitleWithGroq(groqKey, userMessage, 'llama-3.1-8b-instant');
       if (title && title.length >= 2) {
-        console.log(`✅ Title generated via Groq: "${title}"`);
+        console.log(`✅ Title generated via env Groq: "${title}"`);
         return title;
       }
     } catch (e) {
-      console.warn('Groq title gen failed:', e.message);
+      console.warn('Env Groq title gen failed:', e.message);
     }
   }
 
@@ -121,34 +140,65 @@ async function generateChatTitle(userMessage, botResponse) {
 }
 
 /**
- * Use Vertex AI SDK (already configured via service account) with gemini-2.5-flash
- * This uses the SAME auth that already works for image generation
+ * Use Google AI Studio API for standard Gemini fallback
  */
 async function generateTitleWithGemini(apiKey, userMessage) {
-  const { VertexAI } = require('@google-cloud/vertexai');
-  const vertexAI = new VertexAI({ project: 'chakachaka-e672a', location: 'us-central1' });
-  const model = vertexAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-  const result = await model.generateContent({
-    contents: [{ role: 'user', parts: [{ text: TITLE_PROMPT + '\n\nUser\'s message: "' + userMessage.substring(0, 300) + '"' }] }],
+  const axios = require('axios');
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  
+  const response = await axios.post(url, {
+    contents: [{
+      role: 'user',
+      parts: [{ text: TITLE_PROMPT + '\n\nUser\'s message: "' + userMessage.substring(0, 300) + '"' }]
+    }],
     generationConfig: {
       maxOutputTokens: 15,
       temperature: 0.2
     }
+  }, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 5000
   });
 
-  const title = result.response?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  const title = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
   if (!title) return null;
   return title.replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '').substring(0, 60);
 }
 
 /**
- * Use Groq's free Llama API
+ * Use Google AI Studio API for Gemma/Gemini models using an API key
  */
-async function generateTitleWithGroq(groqKey, userMessage) {
+async function generateTitleWithGoogleGemma(apiKey, userMessage, customModel) {
+  const axios = require('axios');
+  const model = customModel || 'gemma-4-26b-a4b-it';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  
+  const response = await axios.post(url, {
+    contents: [{
+      role: 'user',
+      parts: [{ text: TITLE_PROMPT + '\n\nUser\'s message: "' + userMessage.substring(0, 300) + '"' }]
+    }],
+    generationConfig: {
+      maxOutputTokens: 15,
+      temperature: 0.2
+    }
+  }, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 5000
+  });
+
+  const title = response.data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+  if (!title) return null;
+  return title.replace(/^["']|["']$/g, '').replace(/[.!?]+$/, '').substring(0, 60);
+}
+
+/**
+ * Use Groq's API (or compatible endpoint)
+ */
+async function generateTitleWithGroq(groqKey, userMessage, customModel) {
   const axios = require('axios');
   const response = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-    model: 'llama-3.1-8b-instant',
+    model: customModel || 'llama-3.1-8b-instant',
     messages: [
       { role: 'system', content: TITLE_PROMPT },
       { role: 'user', content: `User's message: "${userMessage.substring(0, 300)}"` }
@@ -169,7 +219,9 @@ async function generateTitleWithGroq(groqKey, userMessage) {
 }
 
 function heuristicTitle(text) {
-  const cleaned = text.replace(/\n/g, ' ').trim();
+  // If we concatenated multiple messages with \n\n, just grab the first one
+  const firstMessage = text.split('\n\n')[0] || text;
+  const cleaned = firstMessage.replace(/\n/g, ' ').trim();
   const firstSentence = cleaned.split(/[.!?]/)[0].trim();
   if (firstSentence.length <= 50) return firstSentence;
   return firstSentence.substring(0, 47).replace(/\s+\S*$/, '') + '...';

@@ -23,6 +23,7 @@ const { Agent, BrowserProfile, BrowserSession, Controller } = require('browser-u
 const { ChatGoogle } = require('browser-use/llm/google');
 const { ChatGroq } = require('browser-use/llm/groq');
 const { ChatCerebras } = require('browser-use/llm/cerebras');
+const { ChatDeepSeek } = require('browser-use/llm/deepseek');
 const { ChatOpenAI } = require('browser-use/llm/openai');
 const { z } = require('zod');
 
@@ -73,16 +74,18 @@ function pickGeminiKey() {
 class RotatingChatGoogle extends ChatGoogle {
   constructor(apiKeys, opts = {}) {
     if (!apiKeys?.length) throw new Error('RotatingChatGoogle needs at least one apiKey');
-    // Use gemini-2.5-flash by default — better structured-output reliability
-    // and separate capacity from gemini-2.5-flash. Thinking mode disabled (=0) so
-    // the model returns clean JSON instead of hidden chain-of-thought tokens.
+    // Use gemini-2.5-flash by default. thinkingBudget=1024 is CRITICAL:
+    // with thinkingBudget=0, Gemini 2.5 Flash ignores responseMimeType and
+    // responseSchema, outputting plain text with <execute_tool> XML tags.
+    // A small thinking budget (1024 tokens) dramatically improves JSON compliance.
+    // maxRetries=0 so we fail fast on 429s and rotate immediately.
     const baseOpts = {
       model: opts.model || 'gemini-2.5-flash',
       temperature: opts.temperature ?? 0.2,
       maxOutputTokens: opts.maxOutputTokens ?? 8192,
-      thinkingBudget: 0,            // disable thinking — cleaner JSON output
+      thinkingBudget: 1024,         // >0 needed for Gemini to respect JSON schema
       supportsStructuredOutput: true,
-      maxRetries: 0,                // we handle retries ourselves via rotation
+      maxRetries: 0,                // MUST BE 0 so we fail fast on 429s and rotate immediately!
     };
     super({ ...baseOpts, apiKey: apiKeys[0] });
     this._allKeys = [...apiKeys];
@@ -98,10 +101,84 @@ class RotatingChatGoogle extends ChatGoogle {
     this.client = this._instances[this._currentIdx].client;
   }
 
-  // Override ainvoke to retry across keys on 429 / parse errors
-  async ainvoke(messages, output_format) {
+  // Override _parseStructuredJson to:
+  //   A) Strip XML-like wrappers (<execute_tool>, <execute_action>, etc.)
+  //   B) Strip markdown code fences (```json ... ```)
+  //   C) Coerce common Gemini mistakes (action as object → array)
+  // BEFORE the browser-use Zod schema rejects it.
+  _parseStructuredJson(text) {
+    console.log('[RotatingChatGoogle] Raw LLM Text Output:\n' + text);
+    let cleaned = String(text ?? '').trim();
+
+    // A) Strip XML-like wrappers that Gemini loves to add
+    cleaned = cleaned.replace(/<\/?(?:execute_tool|execute_action|execute_list|execute_browse|tool_code|tool_result)[^>]*>/gi, '');
+
+    // B) Strip markdown code fences
+    const fencedMatch = cleaned.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fencedMatch && fencedMatch[1]) {
+      cleaned = fencedMatch[1].trim();
+    }
+
+    // C) Strip print(...) wrappers like print(click(8))
+    cleaned = cleaned.replace(/^print\((.+)\)\s*$/gm, '$1');
+
+    // D) Try to extract JSON from the cleaned text
+    const firstBrace = cleaned.indexOf('{');
+    const firstBracket = cleaned.indexOf('[');
+    let jsonStart = -1;
+    let jsonEnd = -1;
+
+    if (firstBrace !== -1 && (firstBracket === -1 || firstBrace <= firstBracket)) {
+      jsonStart = firstBrace;
+      jsonEnd = cleaned.lastIndexOf('}');
+    } else if (firstBracket !== -1) {
+      jsonStart = firstBracket;
+      jsonEnd = cleaned.lastIndexOf(']');
+    }
+
+    if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
+      // No JSON found — call super which will throw the appropriate error
+      return super._parseStructuredJson(text);
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(cleaned.slice(jsonStart, jsonEnd + 1));
+    } catch {
+      // If our extraction failed, fall back to the base class parser
+      return super._parseStructuredJson(text);
+    }
+
+    // Coerce common shape mistakes
+    if (parsed && typeof parsed === 'object') {
+      // 1. If it has an action property but it's an object, wrap it
+      if (parsed.action && !Array.isArray(parsed.action) && typeof parsed.action === 'object') {
+        console.warn('[RotatingChatGoogle] Coercing action from object to array before Zod validation');
+        parsed.action = [parsed.action];
+      }
+      // 2. If it omitted the 'action' wrapper entirely (e.g. just returned {"click": {"index": 7}})
+      if (!parsed.action && !Array.isArray(parsed) && Object.keys(parsed).length > 0) {
+        console.warn('[RotatingChatGoogle] Coercing raw action object into {action: [object]} wrapper');
+        parsed = { action: [parsed] };
+      }
+      // 3. If it returned a raw array of actions
+      if (Array.isArray(parsed)) {
+        console.warn('[RotatingChatGoogle] Coercing raw array into {action: array} wrapper');
+        parsed = { action: parsed };
+      }
+    }
+    return parsed;
+  }
+
+  // Override ainvoke to retry across keys on 429 / parse errors.
+  // KEY OPTIMIZATION: on parse failures, retry the SAME key once with a JSON
+  // nudge injected into the messages, before rotating. This prevents burning
+  // all 9 keys on one bad response pattern (Gemini returns the same broken
+  // output regardless of which API key is used).
+  async ainvoke(messages, output_format, options) {
     let lastErr;
     const tried = new Set();
+    const parseRetried = new Set(); // keys that already got a nudge retry
     for (let attempt = 0; attempt < this._allKeys.length; attempt++) {
       if (tried.has(this._currentIdx)) {
         this._useNextKey();
@@ -109,15 +186,38 @@ class RotatingChatGoogle extends ChatGoogle {
       }
       tried.add(this._currentIdx);
       try {
-        const result = await super.ainvoke(messages, output_format);
-        return result;
+        return await super.ainvoke(messages, output_format, options);
       } catch (err) {
         lastErr = err;
         const msg = err?.message || String(err);
         const is429 = /429|RESOURCE_EXHAUSTED|quota|rate ?limit|Too Many Requests/i.test(msg);
-        const isParse = /Unexpected non-whitespace character|JSON parse|Unexpected token/i.test(msg);
-        if (is429 || isParse) {
-          console.warn(`[RotatingChatGoogle] key #${this._currentIdx} failed (${is429 ? '429' : 'parse'}), rotating to next`);
+        const isParse = /Unexpected non-whitespace character|JSON parse|Unexpected token|Expected JSON|expected array|invalid_type/i.test(msg);
+        const isBadKey = /403|Forbidden|400|API key not valid|leaked/i.test(msg);
+        const is503 = /503|UNAVAILABLE|high demand|temporarily overloaded/i.test(msg);
+        const isStreamErr = /Failed to parse stream/i.test(msg);
+
+        // Parse failure: retry SAME key once with a JSON-only nudge
+        if (isParse && !parseRetried.has(this._currentIdx)) {
+          parseRetried.add(this._currentIdx);
+          console.warn(`[RotatingChatGoogle] key #${this._currentIdx} parse fail — retrying SAME key with JSON nudge`);
+          // Inject a JSON reminder into the last user message
+          const nudgedMessages = [...messages];
+          nudgedMessages.push({
+            role: 'user',
+            content: 'IMPORTANT: You MUST respond with ONLY a valid JSON object. No markdown, no XML tags, no <execute_tool>, no ```json fences, no explanatory text. Output ONLY the raw JSON object starting with { and ending with }.',
+          });
+          try {
+            return await super.ainvoke(nudgedMessages, output_format, options);
+          } catch (retryErr) {
+            lastErr = retryErr;
+            console.warn(`[RotatingChatGoogle] key #${this._currentIdx} nudge retry also failed, rotating`);
+            this._useNextKey();
+            continue;
+          }
+        }
+        
+        if (is429 || isParse || isBadKey || is503 || isStreamErr) {
+          console.warn(`[RotatingChatGoogle] key #${this._currentIdx} failed (${is429 ? '429' : isBadKey ? 'bad_key' : is503 ? '503' : 'parse'}), rotating to next`);
           this._useNextKey();
           continue;
         }
@@ -185,6 +285,7 @@ class ChatFirstAvailable {
       } catch (e) {
         lastErr = e;
         const msg = String(e?.message || e);
+        console.error(`[ChatFirstAvailable] ❌ ${name} FAILED: ${msg.slice(0, 300)}`);
         if (/429|rate.?limit|too many requests/i.test(msg)) {
           const ms = this._cooldownFor429(name);
           this.cooldown.set(name, Date.now() + ms);
@@ -215,114 +316,39 @@ function _providerKey(type, envFallback) {
   return null;
 }
 
+/**
+ * Phase 6: Production-ready dual-LLM architecture.
+ *
+ * ONLY two providers — no free-tier garbage that 429s and wastes time:
+ *   1. DeepSeek V4 Flash (PAID, unlimited, primary brain)
+ *   2. Gemini 2.5 Flash pool (FREE, rotated keys, last-resort fallback)
+ *
+ * DeepSeek retries 3 times before falling through.
+ * If DeepSeek is not configured, Gemini is used as the primary.
+ */
 function makeLlm() {
-  // Build a stack: Groq first (fastest), Cerebras second (free Llama 3.3 70b alt),
-  // Sambanova third, OpenRouter fourth, Gemini pool last.
-  // For each provider, prefer admin-managed keys (rotatable, multi-key pool),
-  // fall back to env var for local dev.
   const providers = [];
 
-  const groqInfo = _providerKey('groq', 'GROQ_API_KEY');
-  const groqKey = groqInfo?.key || '';
-  if (groqKey) {
+  // ── PRIMARY: DeepSeek V4 Flash (paid, unlimited, best at tool-calling) ──
+  const deepseekInfo = _providerKey('deepseek', 'DEEPSEEK_API_KEY');
+  const deepseekKey = deepseekInfo?.key || '';
+  if (deepseekKey) {
     providers.push({
-      name: 'groq-llama-3.3-70b',
-      llm: new ChatGroq({
-        model: 'llama-3.3-70b-versatile',
-        apiKey: groqKey,
-        temperature: 0.2,
-        maxOutputTokens: 8192,
-        maxRetries: 1,
-      }),
-    });
-  }
-
-  // Phase 5.5: Cerebras — separate rate-limit pool from Groq.
-  // Model preference: CEREBRAS_MODEL env override, then gpt-oss-120b (OpenAI's
-  // open-source agentic model, strong tool calling, ~1.5s/call on Cerebras).
-  // The available model set varies per account — current free tier offers
-  // gpt-oss-120b, qwen-3-235b, zai-glm-4.7, llama3.1-8b.
-  const cerebrasInfo = _providerKey('cerebras', 'CEREBRAS_API_KEY');
-  const cerebrasKey = cerebrasInfo?.key || '';
-  if (cerebrasKey) {
-    const cerebrasModel = (process.env.CEREBRAS_MODEL || 'gpt-oss-120b').trim();
-    providers.push({
-      name: `cerebras-${cerebrasModel}`,
-      llm: new ChatCerebras({
-        model: cerebrasModel,
-        apiKey: cerebrasKey,
+      name: 'deepseek-v4-flash',
+      llm: new ChatDeepSeek({
+        model: 'deepseek-chat',
+        apiKey: deepseekKey,
         temperature: 0.2,
         maxTokens: 8192,
-        maxRetries: 1,
+        maxRetries: 3,
       }),
     });
+    console.log('[stagehandService] ✅ DeepSeek V4 Flash → PRIMARY brain (paid, unlimited)');
+  } else {
+    console.warn('[stagehandService] ⚠️ No DeepSeek key — Gemini will be primary');
   }
 
-  // Phase 5.7: Sambanova — Llama 3.3 70B at >2000 tok/sec on RDU silicon,
-  // free tier 10 req/min. OpenAI-compatible API at api.sambanova.ai/v1.
-  const sambanovaInfo = _providerKey('sambanova', 'SAMBANOVA_API_KEY');
-  const sambanovaKey = sambanovaInfo?.key || '';
-  if (sambanovaKey) {
-    const sambanovaModel = (process.env.SAMBANOVA_MODEL || 'Meta-Llama-3.3-70B-Instruct').trim();
-    providers.push({
-      name: `sambanova-${sambanovaModel}`,
-      llm: new ChatOpenAI({
-        model: sambanovaModel,
-        apiKey: sambanovaKey,
-        baseURL: 'https://api.sambanova.ai/v1',
-        temperature: 0.2,
-        maxCompletionTokens: 8192,
-        maxRetries: 1,
-      }),
-    });
-  }
-
-  // Phase 5.7: OpenRouter — aggregator with multiple free agentic models.
-  // Default: openai/gpt-oss-120b:free (same model Cerebras runs, designed
-  // for tool calling, ~10s/call on the free tier — slow but reliable).
-  // Avoid meta-llama/llama-3.3-70b-instruct:free — it's the most-requested
-  // free model and instantly 429s. OPENROUTER_MODEL env override.
-  const openrouterInfo = _providerKey('openrouter', 'OPENROUTER_API_KEY');
-  const openrouterKey = openrouterInfo?.key || '';
-  if (openrouterKey) {
-    const openrouterModel = (process.env.OPENROUTER_MODEL || 'openai/gpt-oss-120b:free').trim();
-    providers.push({
-      name: `openrouter-${openrouterModel.split('/').pop()}`,
-      llm: new ChatOpenAI({
-        model: openrouterModel,
-        apiKey: openrouterKey,
-        baseURL: 'https://openrouter.ai/api/v1',
-        temperature: 0.2,
-        maxCompletionTokens: 8192,
-        maxRetries: 1,
-        defaultHeaders: {
-          'HTTP-Referer': 'https://github.com/chaka-ai',
-          'X-Title': 'Chaka AI',
-        },
-      }),
-    });
-  }
-
-  // Phase 5.7: Together AI — Llama 3.3 70B Turbo, $5 free credit (~~5M tokens).
-  // OpenAI-compatible. Fast (~200 tok/sec) and reliable for tool calling.
-  const togetherInfo = _providerKey('together', 'TOGETHER_API_KEY');
-  const togetherKey = togetherInfo?.key || '';
-  if (togetherKey) {
-    const togetherModel = (process.env.TOGETHER_MODEL || 'meta-llama/Llama-3.3-70B-Instruct-Turbo').trim();
-    providers.push({
-      name: `together-${togetherModel.split('/').pop()}`,
-      llm: new ChatOpenAI({
-        model: togetherModel,
-        apiKey: togetherKey,
-        baseURL: 'https://api.together.xyz/v1',
-        temperature: 0.2,
-        maxCompletionTokens: 8192,
-        maxRetries: 1,
-      }),
-    });
-  }
-
-  // Last resort: Gemini pool (rotates between N keys internally)
+  // ── FALLBACK ONLY: Gemini 2.5 Flash pool (free, rotated keys) ──
   const geminiKeys = apiKeyManager.keys?.filter(k => k.type === 'text' && k.key)?.map(k => k.key) || [];
   if (!geminiKeys.length) {
     const fb = apiKeyManager.getCurrentKey()?.key;
@@ -340,7 +366,7 @@ function makeLlm() {
   }
 
   if (!providers.length) {
-    throw new Error('No LLM available (no GROQ_API_KEY, no CEREBRAS_API_KEY, no Gemini text keys)');
+    throw new Error('No LLM available for browser agent — add a DeepSeek or Gemini key via the Admin panel');
   }
 
   if (providers.length === 1) {
@@ -348,29 +374,112 @@ function makeLlm() {
     return providers[0].llm;
   }
 
-  console.log(`[stagehandService] makeLlm() → multi-provider router: ${providers.map(p => p.name).join(' → ')}`);
+  console.log(`[stagehandService] makeLlm() → ${providers.map(p => p.name).join(' → ')} (NO free-tier junk)`);
   return new ChatFirstAvailable(providers);
 }
 
 /**
  * Build a fallback LLM for browser-use's `fallback_llm` option.
- * If the primary is Groq, we use Gemini as fallback (and vice versa) so
- * a single provider outage doesn't kill the agent.
+ * Uses Gemini pool so browser-use can retry parse failures on a different model.
  */
 function makeFallbackLlm() {
-  const groqKey = (process.env.GROQ_API_KEY || '').trim();
   const geminiKeys = apiKeyManager.keys?.filter(k => k.type === 'text' && k.key)?.map(k => k.key) || [];
+  if (!geminiKeys.length) return null;
 
-  // If primary is Groq → fallback to Gemini
-  if (groqKey && geminiKeys.length) {
-    return new RotatingChatGoogle(geminiKeys, {
-      model: 'gemini-2.5-flash',
-      temperature: 0.2,
-      maxOutputTokens: 8192,
-    });
-  }
-  return null;
+  // Give the fallback a subset of Gemini keys if we have enough
+  const fallbackKeys = geminiKeys.length >= 3
+    ? geminiKeys.slice(Math.ceil(geminiKeys.length * 0.7))
+    : geminiKeys;
+
+  console.log(`[stagehandService] makeFallbackLlm() → Gemini pool with ${fallbackKeys.length} keys`);
+  return new RotatingChatGoogle(fallbackKeys, {
+    model: 'gemini-2.5-flash',
+    temperature: 0.2,
+    maxOutputTokens: 8192,
+  });
 }
+
+// ── Gemini Vision Helper ────────────────────────────────────────────────────
+// Uses Gemini to DESCRIBE a screenshot in text. This text is then injected
+// into DeepSeek's context so it can understand visual blockers without
+// needing to process images itself.
+async function geminiDescribePage(screenshotBase64) {
+  const geminiKey = pickGeminiKey();
+  if (!geminiKey) {
+    console.warn('[GeminiVisionHelper] No Gemini key available for vision');
+    return null;
+  }
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              {
+                text: 'Describe what you see on this webpage screenshot in 100 words or less. Focus ONLY on: 1) Any popup overlays, cookie banners, modal dialogs, or consent screens blocking interaction. 2) Error messages or CAPTCHAs. 3) The main page layout and key interactive elements. Be factual and concise.',
+              },
+              { inline_data: { mime_type: 'image/jpeg', data: screenshotBase64 } },
+            ],
+          }],
+        }),
+      }
+    );
+    const data = await response.json();
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || null;
+    if (text) console.log(`[GeminiVisionHelper] Page description (${text.length} chars): ${text.slice(0, 120)}...`);
+    return text;
+  } catch (e) {
+    console.warn('[GeminiVisionHelper] Failed:', e.message);
+    return null;
+  }
+}
+
+// ── Cookie/Popup Auto-Dismiss Script ────────────────────────────────────────
+// Injected into every page to auto-click cookie consent buttons via JS.
+// Zero LLM tokens wasted.
+const COOKIE_DISMISS_SCRIPT = `
+(function dismissCookies() {
+  function tryDismiss() {
+    var selectors = [
+      '#onetrust-accept-btn-handler',
+      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+      '[data-cookiefirst-action="accept"]',
+      '.cookie-notice .accept-btn',
+      '.cc-accept', '.cc-allow', '.cc-dismiss',
+      'button[aria-label*="accept" i]',
+      'button[aria-label*="cookie" i]',
+      'button[aria-label*="consent" i]',
+      'button[aria-label*="agree" i]',
+    ];
+    var textMatches = ['Accept All', 'Accept all', 'Accept Cookies', 'Accept cookies',
+      'I Agree', 'I agree', 'Got it', 'Got It', 'OK', 'Allow All', 'Allow all',
+      'Agree', 'Continue', 'Close'];
+    for (var i = 0; i < selectors.length; i++) {
+      try {
+        var el = document.querySelector(selectors[i]);
+        if (el && el.offsetParent !== null) { el.click(); return true; }
+      } catch(e) {}
+    }
+    var buttons = document.querySelectorAll('button, a[role="button"], [class*="cookie"] button, [class*="consent"] button, [class*="banner"] button, [class*="gdpr"] button, [class*="privacy"] button');
+    for (var j = 0; j < buttons.length; j++) {
+      var txt = (buttons[j].textContent || '').trim();
+      for (var k = 0; k < textMatches.length; k++) {
+        if (txt === textMatches[k] || txt.toLowerCase() === textMatches[k].toLowerCase()) {
+          buttons[j].click(); return true;
+        }
+      }
+    }
+    return false;
+  }
+  setTimeout(tryDismiss, 1000);
+  setTimeout(tryDismiss, 3000);
+  setTimeout(tryDismiss, 6000);
+})();
+`;
 
 // ── Per-user session lifecycle ──────────────────────────────────────────────
 
@@ -723,9 +832,26 @@ async function runAgent(task, {
   const llm = makeLlm();
   const sensitive_data = buildSensitiveData(variables, startUrl);
 
+  // ── COOKIE AUTO-DISMISS: inject JS into every page load ──────────────
+  try {
+    const pages = await session.browser_context?.pages?.() || [];
+    for (const p of pages) {
+      try { await p.addInitScript(COOKIE_DISMISS_SCRIPT); } catch {}
+    }
+    // Also add for any future pages opened during this run
+    session.browser_context?.on?.('page', (newPage) => {
+      try { newPage.addInitScript(COOKIE_DISMISS_SCRIPT); } catch {}
+    });
+    console.log('[stagehandService] 🍪 Cookie auto-dismiss script injected');
+  } catch (e) {
+    console.warn('[stagehandService] Cookie script injection failed (non-fatal):', e.message);
+  }
+
   let stepIndex = 0;
   const stepHistory = [];
   let notifiedState = null;
+  let consecutiveSameAction = 0;
+  let lastActionKey = null;
 
   // ── LIVE FRAME TICKER ────────────────────────────────────────────────────
   // Fires every ~167ms (6fps) in parallel with the agent loop. Sends frames
@@ -746,10 +872,11 @@ async function runAgent(task, {
   }
 
   // Build the task text — prepend startUrl hint if provided so the agent
-  // navigates there first.
+  // navigates there first. Also inject cookie/popup dismiss instructions.
+  const cookieDismissHint = 'IMPORTANT: If you see any cookie consent banners, privacy popups, newsletter modals, or "Accept cookies" buttons, ALWAYS dismiss/accept/close them FIRST before doing anything else. Click "Accept", "Accept All", "I Agree", "Got it", "OK", "Close", or the X button on any overlay. Do NOT try to interact with the main page content until popups are cleared.';
   const fullTask = startUrl
-    ? `First navigate to ${startUrl}, then: ${task}`
-    : task;
+    ? `${cookieDismissHint}\n\nFirst navigate to ${startUrl}, then: ${task}`
+    : `${cookieDismissHint}\n\n${task}`;
 
   const stepCallback = async (summary, output, step) => {
     stepIndex++;
@@ -765,6 +892,29 @@ async function runAgent(task, {
         : (output?.current_state?.next_goal || 'thinking');
       const reasoning = output?.current_state?.memory || output?.current_state?.evaluation_previous_goal || '';
 
+      // ── VISION ASSIST: detect loops and ask Gemini to describe the page ──
+      const actionKey = `${action}:${url}`;
+      if (actionKey === lastActionKey) {
+        consecutiveSameAction++;
+      } else {
+        consecutiveSameAction = 0;
+        lastActionKey = actionKey;
+      }
+
+      let visionContext = null;
+      if (consecutiveSameAction >= 2 && screenshot) {
+        // Agent is stuck — ask Gemini Eyes to describe what's on screen
+        console.log(`[stagehandService] 👁️ Agent stuck (same action ${consecutiveSameAction + 1}x) — calling Gemini Vision Helper`);
+        visionContext = await geminiDescribePage(screenshot);
+        if (visionContext) {
+          // Inject the vision description into the agent's memory for next step
+          output.current_state = output.current_state || {};
+          output.current_state.memory = (output.current_state.memory || '') +
+            `\n\n[VISION ASSIST from Gemini]: ${visionContext}`;
+          console.log('[stagehandService] 👁️ Vision context injected into agent memory');
+        }
+      }
+
       const payload = {
         step: stepIndex,
         action,
@@ -773,6 +923,7 @@ async function runAgent(task, {
         screenshot,
         screenshotMime: 'image/jpeg',
         pageState,
+        visionAssist: visionContext ? true : false,
       };
       stepHistory.push({ step: stepIndex, action, url, pageState });
 
@@ -811,9 +962,9 @@ async function runAgent(task, {
     browser_session: session,
     controller,                  // Phase 5.5: enables wait_for_email + solve_captcha
     sensitive_data,
-    use_vision: false,           // DOM-only mode — cleaner, faster, fewer LLM tokens
+    use_vision: false,           // DOM-only mode — DeepSeek doesn't handle browser-use image payloads well
     use_judge: false,            // skip the optional judge LLM (extra 503-prone call)
-    max_actions_per_step: 3,
+    max_actions_per_step: 5,     // More actions per step = fewer LLM calls needed
     loop_detection_enabled: true,
     loop_detection_window: 4,
     register_new_step_callback: stepCallback,
@@ -881,9 +1032,27 @@ async function observe(instruction, { userId, startUrl } = {}) {
   return { actions: result.message, finalUrl: result.finalUrl };
 }
 
+/**
+ * Returns a human-readable name for the model currently used by makeLlm().
+ * Used by handsController to emit the model name in SSE start events.
+ */
+function getActiveModelName() {
+  try {
+    const llm = makeLlm();
+    // ChatFirstAvailable stores provider names
+    if (llm.provider) return llm.provider;
+    if (llm.model_name) return llm.model_name;
+    if (llm.model) return llm.model;
+    return 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 module.exports = {
   runAgent, act, extractData, observe,
   shutdown, closeSession,
+  getActiveModelName,
   // internals exposed for tests/admin
   getUserDataDir, classifyPageState,
 };

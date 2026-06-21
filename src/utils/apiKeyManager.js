@@ -148,6 +148,12 @@ class ApiKeyManager {
     
     console.warn(`🔄 Live Proxy keys mathematically rotated to prevent stale/broken key loops.`);
   }
+  // Gets an API key designated for title generation (if configured)
+  getTitleKey() {
+    const titleKeys = this.keys.filter(k => k.type === 'title' || k.type === 'groq');
+    if (titleKeys.length > 0) return { ...titleKeys[0] };
+    return null;
+  }
 }
 
 module.exports = new ApiKeyManager();

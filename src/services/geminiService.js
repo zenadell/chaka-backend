@@ -26,7 +26,12 @@ const MODEL_MAP = {
     modelId: "gemini-3-pro-preview-code",
     temperature: 0.2,
     maxOutputTokens: 65536
-  }
+  },
+  "gemini-3.1-flash-lite": {
+    modelId: "gemini-3.1-flash-lite",
+    temperature: 0.5,
+    maxOutputTokens: 65536
+  },
 };
 
 async function streamGeminiChat(apiKey, payload, requestedModel, options = {}) {

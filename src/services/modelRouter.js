@@ -1,4 +1,5 @@
 const { isClaudeAvailable } = require('./claudeService');
+const apiKeyManager = require('../utils/apiKeyManager');
 
 /**
  * Task types and which brain handles them best.
@@ -58,6 +59,16 @@ function routeRequest({ model, contents = [], voiceInput = false, hasImage = fal
     return { brain: 'gemini', reason: 'claude requested but key unavailable', suggestedModel: 'gemini-2.5-flash' };
   }
 
+  // 2b. If caller explicitly requested a DeepSeek model, respect it
+  if (model && model.startsWith('deepseek-')) {
+    const dsKey = apiKeyManager.pickKey('deepseek');
+    if (dsKey) {
+      return { brain: 'deepseek', reason: 'explicit deepseek model requested', suggestedModel: model };
+    }
+    console.warn('[modelRouter] DeepSeek model requested but no deepseek key available. Falling back to Gemini.');
+    return { brain: 'gemini', reason: 'deepseek requested but key unavailable', suggestedModel: 'gemini-2.5-flash' };
+  }
+
   // 3. If caller explicitly requested a Gemini model, respect it
   if (model && model.startsWith('gemini-')) {
     return { brain: 'gemini', reason: 'explicit gemini model requested', suggestedModel: model };
@@ -81,8 +92,8 @@ function routeRequest({ model, contents = [], voiceInput = false, hasImage = fal
     }
   }
 
-  // 5. Default → Gemini (always available)
-  return { brain: 'gemini', reason: 'default', suggestedModel: model || 'gemini-2.5-flash' };
+  // 5. Default → Gemini 3.1 Flash Lite (Fastest/Cheapest)
+  return { brain: 'gemini', reason: 'default (gemini fallback)', suggestedModel: model || 'gemini-3.1-flash-lite' };
 }
 
 function extractLastUserText(contents) {

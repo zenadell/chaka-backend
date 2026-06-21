@@ -548,12 +548,12 @@ After calling set_vision, briefly narrate naturally — e.g., "Okay, looking at 
 
 CRITICAL INSTRUCTION: If the user explicitly says goodbye, bids farewell, or clearly ends the conversation, you MUST call the "end_conversation" tool IMMEDIATELY after giving your final goodbye response. Do NOT leave the conversation open.
 
-**DEEP AGENTS (deep_research, deep_dig, agentic_hands):**
+**DEEP AGENTS (launch_research_tool, launch_osint_tool, launch_browser_tool):**
 These tools are powerful but take several minutes to run. They execute asynchronously in the background.
 1. SPELLING CONFIRMATION: Before triggering a deep agent on a specific target (like a person's name, email, or a complex search term), you MUST verbally confirm the spelling with the user to ensure the speech-to-text heard them correctly.
-2. DISPATCH: When you call the tool, immediately tell the user "I've started that in the background, it will take a few minutes."
-3. WAIT: You can continue talking to the user while it runs.
-4. COMPLETION: When the agent finishes, the system will inject the results into your context via a SYSTEM message. Once you receive that message, summarize the findings for the user.
+2. DISPATCH (ANTI-LAZINESS RULE - CRITICAL): You MUST actually call the native tool function (launch_research_tool, launch_osint_tool, or launch_browser_tool). NEVER say "I've dispatched the agents" without ACTUALLY invoking the tool function. If you just speak the words without calling the function, the system fails and the user gets nothing.
+3. ACKNOWLEDGE: Right before or right as you call the tool, tell the user: "I've started that in the background, it will take a few minutes."
+4. WAIT & RESUME: You can continue talking to the user while it runs. When the agent finishes, the system will inject the results into your context via a SYSTEM message. Once you receive that message, summarize the findings for the user.
 
 ${birthdayInjection}
 `.trim();
@@ -642,8 +642,8 @@ ${birthdayInjection}
                             }
                         },
                         {
-                            name: "deep_research",
-                            description: "Dispatches the Deep Research agent to investigate a complex topic in the background. Run this when the user asks for a 'deep research', 'comprehensive report', or asks a very complex question that requires synthesizing multiple sources. It takes several minutes to complete.",
+                            name: "launch_research_tool",
+                            description: "Dispatches the Deep Research agent to investigate a complex topic in the background. CRITICAL: You MUST call this function when the user asks for deep research. Do NOT just say you did it.",
                             parameters: {
                                 type: "object",
                                 properties: {
@@ -656,8 +656,8 @@ ${birthdayInjection}
                             }
                         },
                         {
-                            name: "deep_dig",
-                            description: "Dispatches the Deep Dig (OSINT) agent in the background to investigate a person, username, or email address. Takes several minutes. ALWAYS confirm spelling before running this.",
+                            name: "launch_osint_tool",
+                            description: "Dispatches the Deep Dig (OSINT) agent in the background to investigate a person, username, or email address. CRITICAL: You MUST call this function when the user asks for a deep dig or OSINT. Do NOT just say you did it.",
                             parameters: {
                                 type: "object",
                                 properties: {
@@ -670,17 +670,17 @@ ${birthdayInjection}
                             }
                         },
                         {
-                            name: "agentic_hands",
-                            description: "Dispatches the Agentic Hands browser automation tool in the background to navigate a website, click things, or extract data dynamically. Takes a few minutes.",
+                            name: "launch_browser_tool",
+                            description: "Dispatches the Agentic Hands browser automation tool in the background to navigate a website, click things, or extract data dynamically. CRITICAL: You MUST call this function when the user asks you to go to a website and perform actions. Do NOT just say you did it.",
                             parameters: {
                                 type: "object",
                                 properties: {
-                                    prompt: {
+                                    instruction: {
                                         type: "string",
                                         description: "The instruction for the browser agent (e.g. 'go to target.com and find the price of X')."
                                     }
                                 },
-                                required: ["prompt"]
+                                required: ["instruction"]
                             }
                         }
                     ]

@@ -1,9 +1,11 @@
 const apiKeyManager = require('../utils/apiKeyManager');
 const { streamGeminiChat } = require('../services/geminiService');
 const { streamClaudeChat, isClaudeAvailable } = require('../services/claudeService');
+const { streamDeepSeekChat } = require('../services/deepseekService');
 const { routeRequest, detectImage } = require('../services/modelRouter');
 const { generateSpeechRaw } = require('../services/ttsService');
 const { injectCapabilities } = require('../utils/capabilities');
+const { processChatContentsForRAG } = require('../services/ragService');
 
 const MASTER_TIMEOUT = 90000;
 
@@ -39,6 +41,9 @@ exports.handleChatRequest = async (req, res) => {
   // --- Inject tool awareness so Chaka knows her own capabilities ---
   injectCapabilities(contents);
 
+  // --- RAG Pipeline: Intercept and parse documents (PDFs, DOCX) into markdown ---
+  await processChatContentsForRAG(contents);
+
   // --- Route: decide Claude vs Gemini ---
   const route = routeRequest({ model, contents, voiceInput, hasImage });
   console.log(`🧠 Model Router → brain=${route.brain} | reason="${route.reason}" | model=${route.suggestedModel}`);
@@ -67,6 +72,30 @@ exports.handleChatRequest = async (req, res) => {
     } catch (err) {
       console.error(`❌ Claude failed: ${err.message}. Falling back to Gemini.`);
       // Fall through to Gemini retry loop below
+    }
+  }
+
+  // ── DEEPSEEK BRAIN ──────────────────────────────────────────────────────
+  if (route.brain === 'deepseek') {
+    const dsKeyInfo = apiKeyManager.pickKey('deepseek');
+    if (dsKeyInfo) {
+      try {
+        const result = await streamDeepSeekChat(dsKeyInfo.key, payload, route.suggestedModel);
+        res.setHeader('Content-Type', 'application/json');
+        success = true;
+
+        for await (const chunk of result.stream) {
+          const chunkText = chunk.text();
+          res.write(JSON.stringify({ text: chunkText, _brain: 'deepseek' }) + '\n');
+        }
+        res.end();
+        return;
+      } catch (err) {
+        console.error(`❌ DeepSeek failed: ${err.message}. Falling back to Gemini.`);
+        // Fall through to Gemini retry loop below
+      }
+    } else {
+      console.warn('[chatController] DeepSeek brain selected but no key available. Falling back to Gemini.');
     }
   }
 

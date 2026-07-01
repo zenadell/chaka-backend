@@ -349,13 +349,19 @@ Keep it very clear and informative.
             try { fs.unlinkSync(tempFilePath); } catch (err) {}
         }
 
-        // Full video download blocked by YouTube's bot-check (common on cloud
-        // IPs, requires no action from anyone to work around): fall back to
-        // captions + metadata instead of failing outright. No visual analysis,
-        // but a real, honest answer instead of nothing.
-        if (/sign in to confirm|not a bot/i.test(e.message)) {
+        // When the full video download fails on YouTube — whether from the
+        // bot-check ("sign in to confirm you're not a bot") OR the n-challenge
+        // ("challenge solving failed" / "formats may be missing", which needs a
+        // JS runtime the server lacks) — fall back to captions + metadata.
+        // Captions come from a separate timedtext endpoint that doesn't go
+        // through the streaming-format n-challenge, so they succeed where the
+        // video stream doesn't. No visual analysis, but a real, honest answer
+        // (title + description + full transcript) instead of nothing.
+        const isYouTube = /youtube\.com|youtu\.be/i.test(url);
+        const captionsWorthTrying = isYouTube || /sign in to confirm|not a bot|challenge solving failed|formats may be missing|requested format is not available|only images are available/i.test(e.message);
+        if (captionsWorthTrying) {
             try {
-                console.warn('[VideoAgent] Full video blocked — falling back to captions-only.');
+                console.warn('[VideoAgent] Full video failed — falling back to captions-only.');
                 const { title, description, transcript } = await fetchCaptionsOnly(url);
                 return `Video title: ${title}\n\nDescription: ${description}\n\nTranscript:\n${transcript}`;
             } catch (capErr) {

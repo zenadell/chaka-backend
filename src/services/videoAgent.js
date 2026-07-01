@@ -77,8 +77,9 @@ async function downloadVideo(url, tempFilePath) {
         // Ensure we don't leave zombie processes running forever (e.g. infinite loop livestreams)
         const dlProcess = execFile(YTDLP_PATH, args, { timeout: 60000 }, (error, stdout, stderr) => {
             if (error) {
+                const detail = String(stderr || error.message || '').trim().split('\n').slice(-3).join(' | ').slice(0, 300);
                 console.error(`❌ VideoAgent Download Error (might be timeout or restriction):`, stderr || error.message);
-                return reject(new Error("VideoAgent failed to fetch. It may be restricted, live, or too large."));
+                return reject(new Error(`VideoAgent failed to fetch. It may be restricted, live, or too large. [${detail}]`));
             }
             if (!fs.existsSync(tempFilePath)) {
                 return reject(new Error("File was not fully downloaded by yt-dlp"));

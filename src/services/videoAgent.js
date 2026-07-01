@@ -9,7 +9,42 @@ const apiKeyManager = require('../utils/apiKeyManager');
 
 const BIN_DIR = path.join(__dirname, '..', 'bin');
 const YTDLP_BINARY_NAME = process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-dlp';
-const YTDLP_PATH = path.join(BIN_DIR, 'yt-dlp'); 
+const YTDLP_PATH = path.join(BIN_DIR, 'yt-dlp');
+
+// ── YouTube cookie auth ──────────────────────────────────────────────────────
+// YouTube's bot-check ("Sign in to confirm you're not a bot") gates the
+// default web client for datacenter/cloud IPs and cannot be bypassed with
+// player-client tricks alone — it genuinely requires an authenticated
+// session. We read the exported cookies.txt content from an env var (set in
+// Render's dashboard, never committed to git) and write it to a local temp
+// file once per process, since yt-dlp needs a file path, not raw content.
+let _cookiesFilePath = null;
+let _cookiesFileChecked = false;
+function getCookiesFilePath() {
+    if (_cookiesFileChecked) return _cookiesFilePath;
+    _cookiesFileChecked = true;
+    try {
+        const raw = process.env.YOUTUBE_COOKIES;
+        if (raw && raw.trim()) {
+            const p = path.join(os.tmpdir(), 'chaka-youtube-cookies.txt');
+            fs.writeFileSync(p, raw, 'utf8');
+            _cookiesFilePath = p;
+            console.log('✅ VideoAgent: YouTube cookies loaded from YOUTUBE_COOKIES env var.');
+        } else {
+            // Local dev convenience: a gitignored file in the project root.
+            const localPath = path.join(__dirname, '..', '..', 'youtube-cookies.txt');
+            if (fs.existsSync(localPath)) {
+                _cookiesFilePath = localPath;
+                console.log('✅ VideoAgent: YouTube cookies loaded from local youtube-cookies.txt.');
+            } else {
+                console.warn('⚠️  VideoAgent: no YOUTUBE_COOKIES configured — YouTube downloads will likely fail with "Sign in to confirm you\'re not a bot" on cloud IPs.');
+            }
+        }
+    } catch (e) {
+        console.warn('⚠️  VideoAgent: failed to set up YouTube cookies file:', e.message);
+    }
+    return _cookiesFilePath;
+}
 
 /**
  * Ensures yt-dlp is downloaded and executable.
@@ -59,6 +94,7 @@ async function downloadVideo(url, tempFilePath) {
         // guaranteeing lightning-fast downloads and completely removing the need for ffmpeg to merge streams.
         // It's perfectly fine for Gemini to "see" what's happening.
         // --max-filesize 50M ensures we do not download ultra-huge files.
+        const cookiesPath = getCookiesFilePath();
         const args = [
             '--use-extractors', 'default,-generic',
             // YouTube specifically requires a proof-of-origin token from its
@@ -68,6 +104,7 @@ async function downloadVideo(url, tempFilePath) {
             // way, so we ask for it first and let yt-dlp fall back to web for
             // every other site (this arg is a no-op for non-YouTube extractors).
             '--extractor-args', 'youtube:player_client=android,web',
+            ...(cookiesPath ? ['--cookies', cookiesPath] : []),
             '-f', 'worst[ext=mp4]/lowest[ext=mp4]/best[ext=mp4]',
             '--max-filesize', '50M',
             '-o', tempFilePath,
@@ -116,7 +153,14 @@ async function probeVideo(url, timeoutMs = 8000) {
         // plain webpage (github.com, example.com, ...) took 15s+ to be correctly
         // rejected instead of ~0.4s — unacceptable when this probe runs on every
         // single browse/scrape call.
-        execFile(YTDLP_PATH, ['--use-extractors', 'default,-generic', '--extractor-args', 'youtube:player_client=android,web', '--no-warnings', '--skip-download', '--print', 'id', url], { timeout: timeoutMs }, (error, stdout) => {
+        const cookiesPath = getCookiesFilePath();
+        const probeArgs = [
+            '--use-extractors', 'default,-generic',
+            '--extractor-args', 'youtube:player_client=android,web',
+            ...(cookiesPath ? ['--cookies', cookiesPath] : []),
+            '--no-warnings', '--skip-download', '--print', 'id', url
+        ];
+        execFile(YTDLP_PATH, probeArgs, { timeout: timeoutMs }, (error, stdout) => {
             resolve(!error && !!stdout && !!stdout.trim());
         });
     });

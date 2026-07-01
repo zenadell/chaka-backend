@@ -13,6 +13,9 @@ firebase-service-account.json
 # Browser-use persistent profiles (contains cookies + login state — DO NOT COMMIT)
 user-data/
 
+# YouTube cookies for yt-dlp auth (live authenticated session — DO NOT COMMIT)
+youtube-cookies.txt
+
 # Local databases
 local.db
 local.db-journal

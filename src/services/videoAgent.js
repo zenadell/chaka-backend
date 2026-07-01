@@ -12,33 +12,44 @@ const YTDLP_BINARY_NAME = process.platform === 'darwin' ? 'yt-dlp_macos' : 'yt-d
 const YTDLP_PATH = path.join(BIN_DIR, 'yt-dlp');
 
 // ── YouTube cookie auth ──────────────────────────────────────────────────────
-// YouTube's bot-check ("Sign in to confirm you're not a bot") gates the
-// default web client for datacenter/cloud IPs and cannot be bypassed with
-// player-client tricks alone — it genuinely requires an authenticated
-// session. We read the exported cookies.txt content from an env var (set in
-// Render's dashboard, never committed to git) and write it to a local temp
-// file once per process, since yt-dlp needs a file path, not raw content.
+// YouTube's bot-check ("Sign in to confirm you're not a bot") gates ALL yt-dlp
+// extraction (video AND captions) from datacenter/cloud IPs at the metadata
+// step — no player-client trick bypasses it. It genuinely requires an
+// authenticated session. Cookies are configured ONCE on the server and apply
+// to every user automatically; no end user ever touches this.
+//
+// Source priority (first match wins), all writable-temp-copied so yt-dlp can
+// refresh session cookies back to the file without hitting read-only errors:
+//   1. Render Secret File at /etc/secrets/youtube-cookies.txt  (RECOMMENDED —
+//      preserves the tab-delimited Netscape format exactly, unlike env vars)
+//   2. YOUTUBE_COOKIES env var (raw cookies.txt content)
+//   3. Local ./youtube-cookies.txt in project root (dev convenience, gitignored)
 let _cookiesFilePath = null;
 let _cookiesFileChecked = false;
 function getCookiesFilePath() {
     if (_cookiesFileChecked) return _cookiesFilePath;
     _cookiesFileChecked = true;
+    const writableCopy = (contents) => {
+        const p = path.join(os.tmpdir(), 'chaka-youtube-cookies.txt');
+        fs.writeFileSync(p, contents, 'utf8');
+        return p;
+    };
     try {
+        const secretPath = '/etc/secrets/youtube-cookies.txt';
         const raw = process.env.YOUTUBE_COOKIES;
-        if (raw && raw.trim()) {
-            const p = path.join(os.tmpdir(), 'chaka-youtube-cookies.txt');
-            fs.writeFileSync(p, raw, 'utf8');
-            _cookiesFilePath = p;
+        const localPath = path.join(__dirname, '..', '..', 'youtube-cookies.txt');
+
+        if (fs.existsSync(secretPath)) {
+            _cookiesFilePath = writableCopy(fs.readFileSync(secretPath, 'utf8'));
+            console.log('✅ VideoAgent: YouTube cookies loaded from Render secret file.');
+        } else if (raw && raw.trim()) {
+            _cookiesFilePath = writableCopy(raw);
             console.log('✅ VideoAgent: YouTube cookies loaded from YOUTUBE_COOKIES env var.');
+        } else if (fs.existsSync(localPath)) {
+            _cookiesFilePath = writableCopy(fs.readFileSync(localPath, 'utf8'));
+            console.log('✅ VideoAgent: YouTube cookies loaded from local youtube-cookies.txt.');
         } else {
-            // Local dev convenience: a gitignored file in the project root.
-            const localPath = path.join(__dirname, '..', '..', 'youtube-cookies.txt');
-            if (fs.existsSync(localPath)) {
-                _cookiesFilePath = localPath;
-                console.log('✅ VideoAgent: YouTube cookies loaded from local youtube-cookies.txt.');
-            } else {
-                console.warn('⚠️  VideoAgent: no YOUTUBE_COOKIES configured — YouTube downloads will likely fail with "Sign in to confirm you\'re not a bot" on cloud IPs.');
-            }
+            console.warn('⚠️  VideoAgent: no YouTube cookies configured — YouTube will fail with "Sign in to confirm you\'re not a bot" on cloud IPs (other platforms unaffected).');
         }
     } catch (e) {
         console.warn('⚠️  VideoAgent: failed to set up YouTube cookies file:', e.message);

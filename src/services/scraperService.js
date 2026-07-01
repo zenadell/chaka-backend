@@ -5,6 +5,7 @@ const cheerio = require('cheerio');
 const TurndownService = require('turndown');
 const crypto = require('crypto');
 const { chromium } = require('playwright');
+const { tryProcessVideo } = require('./videoAgent');
 
 // ── User-agent pool (realistic Chrome / Firefox / Safari) ─────────────────────
 
@@ -243,10 +244,16 @@ async function fetchPlaywright(url, opts = {}) {
 
   const page = await context.newPage();
   try {
+    // NOTE: waitUntil was previously 'networkidle', which hangs for the full
+    // timeout on sites with continuous background polling/analytics (TikTok,
+    // Twitter/X, Instagram never go network-idle). domcontentloaded + a bounded,
+    // swallowed attempt at networkidle gives JS-heavy pages a chance to hydrate
+    // without blocking on sites that never settle.
     await page.goto(url, {
-      waitUntil: 'networkidle',
+      waitUntil: 'domcontentloaded',
       timeout: opts.timeout || 30_000,
     });
+    await page.waitForLoadState('networkidle', { timeout: 4000 }).catch(() => {});
 
     // Give JS-heavy pages a moment to settle
     await page.waitForTimeout(1500);
@@ -279,9 +286,12 @@ let _db = null;
 
 async function getDb() {
   if (_db) return _db;
-  if (!process.env.TURSO_DB_URL || !process.env.TURSO_AUTH_TOKEN) return null;
+  // NOTE: was TURSO_DB_URL, which doesn't match the TURSO_DATABASE_URL name
+  // used everywhere else (see tursoService.js) — the cache was silently
+  // never activating in any environment that only sets TURSO_DATABASE_URL.
+  if (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN) return null;
   const { createClient } = require('@libsql/client');
-  _db = createClient({ url: process.env.TURSO_DB_URL, authToken: process.env.TURSO_AUTH_TOKEN });
+  _db = createClient({ url: process.env.TURSO_DATABASE_URL, authToken: process.env.TURSO_AUTH_TOKEN });
   await _db.execute(`
     CREATE TABLE IF NOT EXISTS scrape_cache (
       hash      TEXT    PRIMARY KEY,
@@ -366,30 +376,73 @@ async function scrape(url, options = {}) {
     if (hit) return hit;
   }
 
+  // Video-first: try yt-dlp's own extractor detection before treating this as
+  // a normal webpage. This covers YouTube, TikTok, Twitter/X, Instagram, Vimeo,
+  // Reddit, and hundreds of other sites uniformly — we never guess from the
+  // URL string ourselves, we just ask yt-dlp and fall through cleanly if it
+  // says no. This also happens to be the ONLY reliable way to get TikTok
+  // content at all: TikTok's web page hard-blocks headless browsers (returns
+  // a bare login wall) even via full Playwright, while yt-dlp talks to
+  // TikTok's own API and works fine.
+  if (!forcePlaywright) {
+    const videoAnalysis = await tryProcessVideo(url).catch(() => null);
+    if (videoAnalysis) {
+      const wordCount = videoAnalysis.split(/\s+/).filter(Boolean).length;
+      const result = {
+        url,
+        tier: 'video',
+        title: '',
+        description: '',
+        author: '',
+        publishedTime: '',
+        favicon: '',
+        content: videoAnalysis,
+        links: [],
+        images: [],
+        wordCount,
+        readTimeMin: Math.ceil(wordCount / 200),
+        screenshot: null,
+        scrapedAt: new Date().toISOString(),
+        cached: false,
+        cacheAgeSeconds: 0,
+      };
+      if (useCache) setCache(url, result, 'video', ttl).catch(() => {});
+      return result;
+    }
+  }
+
   let html = null;
   let tier = 'tier1';
   let pwResult = null;
+  let data = null;
 
   // Tier 1: direct fetch
   if (!forcePlaywright) {
     try {
       html = await fetchDirect(url, { proxy, timeout });
+      data = extract(html, url);
+      // Tier-1 can return HTTP 200 with an almost-empty JS-rendered shell
+      // (e.g. YouTube's SSR shell has real title/meta tags but no body text).
+      // A clean 200 response used to be treated as full success with no
+      // check on whether it actually got any content — escalate instead.
+      if (!data.content || data.wordCount < 30) {
+        console.log(`[scraper] tier-1 content too thin (${data.wordCount} words) → escalating to Playwright`);
+        html = null;
+        data = null;
+      }
     } catch (e) {
       console.log(`[scraper] tier-1 failed (${e.message}) → escalating to Playwright`);
-      tier = 'tier2';
     }
-  } else {
-    tier = 'tier2';
   }
 
   // Tier 2: Playwright stealth
-  if (!html) {
+  if (!data) {
     pwResult = await fetchPlaywright(url, { screenshot, proxy, timeout });
     html = pwResult.html;
     tier = 'tier2';
+    data = extract(html, url);
   }
 
-  const data = extract(html, url);
   const result = {
     url,
     tier,

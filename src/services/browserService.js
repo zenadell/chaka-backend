@@ -12,6 +12,7 @@
  */
 
 const { chromium } = require('playwright');
+const { tryProcessVideo } = require('./videoAgent');
 
 const DEFAULTS = {
   navTimeoutMs: 25000,
@@ -176,6 +177,26 @@ async function extractInternalLinks(page, originUrl) {
  */
 async function navigate({ url, screenshot = true, fullPage = false, includeLinks = true }) {
   const safeUrl = validateUrl(url);
+
+  // Video-first: some sites (TikTok in particular) hard-wall the rendered
+  // page behind a login prompt even for a full headless browser — there is
+  // no page content to extract at all, only a bot-check. yt-dlp bypasses
+  // this by talking to the site's own API instead of rendering the page, and
+  // its extractor detection covers YouTube/TikTok/Twitter/Instagram/Vimeo/etc.
+  // uniformly, so we try it before spending a real browser tab on the page.
+  const videoAnalysis = await tryProcessVideo(safeUrl).catch(() => null);
+  if (videoAnalysis) {
+    return {
+      title: 'Video',
+      finalUrl: safeUrl,
+      text: videoAnalysis,
+      screenshot: null,
+      screenshotMime: null,
+      links: [],
+      isVideo: true,
+    };
+  }
+
   return await withPage({}, async (page) => {
     await gotoSafe(page, safeUrl);
 

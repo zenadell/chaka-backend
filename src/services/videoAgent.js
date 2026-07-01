@@ -60,6 +60,7 @@ async function downloadVideo(url, tempFilePath) {
         // It's perfectly fine for Gemini to "see" what's happening.
         // --max-filesize 50M ensures we do not download ultra-huge files.
         const args = [
+            '--use-extractors', 'default,-generic',
             '-f', 'worst[ext=mp4]/lowest[ext=mp4]/best[ext=mp4]',
             '--max-filesize', '50M',
             '-o', tempFilePath,
@@ -85,11 +86,62 @@ function getFileManager(apiKey) { return new GoogleAIFileManager(apiKey); }
 function getGenAI(apiKey) { return new GoogleGenerativeAI(apiKey); }
 
 /**
+ * Fast, no-download check: does yt-dlp actually recognize this URL as
+ * extractable media? yt-dlp maintains its own extractor list for 1800+
+ * sites (YouTube, TikTok, Twitter/X, Instagram, Vimeo, Reddit, etc.) plus a
+ * generic direct-file fallback, so this is far more accurate than any
+ * domain/regex check we could write ourselves — and it costs a couple of
+ * seconds instead of a full download.
+ */
+async function probeVideo(url, timeoutMs = 8000) {
+    try {
+        await ensureYtDlp();
+    } catch {
+        return false;
+    }
+    return new Promise((resolve) => {
+        // --use-extractors default,-generic is the key flag here: it keeps every
+        // named site extractor (YouTube, TikTok, Twitter/X, Instagram, Vimeo,
+        // Reddit, etc. — matched almost instantly via yt-dlp's own URL regexes)
+        // but disables yt-dlp's "generic" fallback, which otherwise fetches and
+        // parses the full page looking for embedded media. Without this, every
+        // plain webpage (github.com, example.com, ...) took 15s+ to be correctly
+        // rejected instead of ~0.4s — unacceptable when this probe runs on every
+        // single browse/scrape call.
+        execFile(YTDLP_PATH, ['--use-extractors', 'default,-generic', '--no-warnings', '--skip-download', '--print', 'id', url], { timeout: timeoutMs }, (error, stdout) => {
+            resolve(!error && !!stdout && !!stdout.trim());
+        });
+    });
+}
+
+/**
+ * Best-effort video pipeline. Probes first so we never spend time downloading
+ * a page that isn't actually a video, and NEVER throws — callers should treat
+ * a null return as "this isn't a video, fall back to normal handling"
+ * rather than as an error. This is what lets any URL (YouTube, TikTok,
+ * Twitter/X, Instagram, a raw .mp4 link, etc.) be handled the same way
+ * without us ever having to classify it ourselves.
+ */
+async function tryProcessVideo(url) {
+    try {
+        const isVideo = await probeVideo(url);
+        if (!isVideo) return null;
+        return await processVideo(url);
+    } catch (e) {
+        console.warn(`[VideoAgent] tryProcessVideo: treating as non-video (${e.message})`);
+        return null;
+    }
+}
+
+/**
  * Main VideoAgent Pipeline
  */
 async function processVideo(url) {
-    const keyInfo = apiKeyManager.getCurrentKey(); 
-    if (!keyInfo) return "[SYSTEM_INFO: Video processing failed. No API Key available.]";
+    const keyInfo = apiKeyManager.getCurrentKey();
+    // Throw (not return a string) so callers — especially tryProcessVideo's
+    // truthy-return check — can't mistake this failure message for real
+    // analysis content.
+    if (!keyInfo) throw new Error('Video processing failed. No API Key available.');
 
     await ensureYtDlp();
 
@@ -156,4 +208,4 @@ Keep it very clear and informative.
     }
 }
 
-module.exports = { processVideo };
+module.exports = { processVideo, probeVideo, tryProcessVideo };

@@ -131,6 +131,87 @@ function getFileManager(apiKey) { return new GoogleAIFileManager(apiKey); }
 function getGenAI(apiKey) { return new GoogleGenerativeAI(apiKey); }
 
 /**
+ * Strips VTT formatting down to plain spoken text (drops cue numbers,
+ * timestamps, and inline <00:00:01.000> tags).
+ */
+function vttToPlainText(vtt) {
+    const stripTags = (s) => s.replace(/<[^>]+>/g, '');
+
+    // YouTube's auto-caption VTT uses a "rolling" format: each cue block
+    // shows [previous stabilized line, new growing line], so the SAME line
+    // reappears across several consecutive cues before scrolling off. Taking
+    // just the last text line of each cue block, then collapsing consecutive
+    // duplicates, reconstructs the real spoken sequence without repetition.
+    const blocks = vtt.split(/\r?\n\r?\n+/);
+    const lastLines = [];
+    for (const block of blocks) {
+        const rawLines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+        const textLines = rawLines.filter(l =>
+            !l.includes('-->') && l !== 'WEBVTT' && !l.startsWith('Kind:') && !l.startsWith('Language:') && !l.startsWith('NOTE')
+        );
+        if (!textLines.length) continue;
+        const last = stripTags(textLines[textLines.length - 1]).trim();
+        if (last) lastLines.push(last);
+    }
+
+    const deduped = [];
+    for (const line of lastLines) {
+        if (deduped.length === 0 || deduped[deduped.length - 1] !== line) deduped.push(line);
+    }
+    return deduped.join(' ')
+        .replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"')
+        .replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Caption-only fallback for when full video download is blocked (YouTube's
+ * "Sign in to confirm you're not a bot" wall on cloud IPs). Fetching just the
+ * caption track + metadata is a much lighter request than streaming the
+ * actual video file and isn't subject to the same gate, so this needs no
+ * cookies or user action — it's what most AI products do for YouTube anyway
+ * (transcript-based summary rather than literal frame-by-frame viewing).
+ */
+async function fetchCaptionsOnly(url) {
+    await ensureYtDlp();
+    const tmpDir = path.join(os.tmpdir(), `chaka_cap_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const cookiesPath = getCookiesFilePath();
+    const args = [
+        '--use-extractors', 'default,-generic',
+        '--extractor-args', 'youtube:player_client=android,web',
+        ...(cookiesPath ? ['--cookies', cookiesPath] : []),
+        '--skip-download',
+        '--write-auto-sub', '--write-sub',
+        '--sub-lang', 'en.*,en',
+        '--sub-format', 'vtt',
+        '--print', 'after_move:%(title)s|||%(description)s',
+        '-o', path.join(tmpDir, 'media'),
+        url
+    ];
+    return new Promise((resolve, reject) => {
+        execFile(YTDLP_PATH, args, { timeout: 30000 }, (error, stdout, stderr) => {
+            let title = '', description = '', transcript = '';
+            try {
+                const printedLine = (stdout || '').trim().split('\n').filter(Boolean).pop() || '';
+                const parts = printedLine.split('|||');
+                if (parts.length === 2) { [title, description] = parts; }
+                const vttFiles = fs.readdirSync(tmpDir).filter(f => f.endsWith('.vtt'));
+                if (vttFiles.length) {
+                    transcript = vttToPlainText(fs.readFileSync(path.join(tmpDir, vttFiles[0]), 'utf8'));
+                }
+            } catch {}
+            try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+
+            if (!transcript) {
+                const detail = String(stderr || error?.message || 'no captions available').trim().split('\n').slice(-2).join(' | ').slice(0, 200);
+                return reject(new Error(`No captions available. [${detail}]`));
+            }
+            resolve({ title, description, transcript: transcript.slice(0, 50000) });
+        });
+    });
+}
+
+/**
  * Fast, no-download check: does yt-dlp actually recognize this URL as
  * extractable media? yt-dlp maintains its own extractor list for 1800+
  * sites (YouTube, TikTok, Twitter/X, Instagram, Vimeo, Reddit, etc.) plus a
@@ -256,6 +337,22 @@ Keep it very clear and informative.
         if (fs.existsSync(tempFilePath)) {
             try { fs.unlinkSync(tempFilePath); } catch (err) {}
         }
+
+        // Full video download blocked by YouTube's bot-check (common on cloud
+        // IPs, requires no action from anyone to work around): fall back to
+        // captions + metadata instead of failing outright. No visual analysis,
+        // but a real, honest answer instead of nothing.
+        if (/sign in to confirm|not a bot/i.test(e.message)) {
+            try {
+                console.warn('[VideoAgent] Full video blocked — falling back to captions-only.');
+                const { title, description, transcript } = await fetchCaptionsOnly(url);
+                return `Video title: ${title}\n\nDescription: ${description}\n\nTranscript:\n${transcript}`;
+            } catch (capErr) {
+                console.error('[VideoAgent] Captions fallback also failed:', capErr.message);
+                throw new Error(e.message);
+            }
+        }
+
         throw new Error(e.message);
     }
 }

@@ -61,6 +61,13 @@ async function downloadVideo(url, tempFilePath) {
         // --max-filesize 50M ensures we do not download ultra-huge files.
         const args = [
             '--use-extractors', 'default,-generic',
+            // YouTube specifically requires a proof-of-origin token from its
+            // default web client, which cloud/datacenter IPs (Render, AWS, etc.)
+            // routinely fail to satisfy — showing up as a plain download failure
+            // with no useful message. The android client isn't gated the same
+            // way, so we ask for it first and let yt-dlp fall back to web for
+            // every other site (this arg is a no-op for non-YouTube extractors).
+            '--extractor-args', 'youtube:player_client=android,web',
             '-f', 'worst[ext=mp4]/lowest[ext=mp4]/best[ext=mp4]',
             '--max-filesize', '50M',
             '-o', tempFilePath,
@@ -108,7 +115,7 @@ async function probeVideo(url, timeoutMs = 8000) {
         // plain webpage (github.com, example.com, ...) took 15s+ to be correctly
         // rejected instead of ~0.4s — unacceptable when this probe runs on every
         // single browse/scrape call.
-        execFile(YTDLP_PATH, ['--use-extractors', 'default,-generic', '--no-warnings', '--skip-download', '--print', 'id', url], { timeout: timeoutMs }, (error, stdout) => {
+        execFile(YTDLP_PATH, ['--use-extractors', 'default,-generic', '--extractor-args', 'youtube:player_client=android,web', '--no-warnings', '--skip-download', '--print', 'id', url], { timeout: timeoutMs }, (error, stdout) => {
             resolve(!error && !!stdout && !!stdout.trim());
         });
     });

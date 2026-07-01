@@ -366,7 +366,7 @@ Keep it very clear and informative.
                 return `Video title: ${title}\n\nDescription: ${description}\n\nTranscript:\n${transcript}`;
             } catch (capErr) {
                 console.error('[VideoAgent] Captions fallback also failed:', capErr.message);
-                throw new Error(e.message);
+                throw new Error(`${e.message} || CAPTIONS: ${capErr.message}`);
             }
         }
 

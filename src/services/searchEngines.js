@@ -70,19 +70,31 @@ async function searchExa(query, opts = {}) {
       query,
       numResults: opts.maxResults || 10,
       type: 'auto', // auto picks neural or keyword based on the query
-      contents: { text: { maxCharacters: 1500 } },
+      contents: {
+        text: { maxCharacters: 1500 },
+        // Highlights = token-efficient, query-focused excerpts. For "find a
+        // person" queries these surface the exact relevant lines (incl. cached
+        // LinkedIn/X passages), which sharpens ranking AND the walled-garden
+        // snippet fallback in deepResearchService.
+        highlights: { numSentences: 5, highlightsPerUrl: 3, query },
+      },
     }, {
       headers: { 'x-api-key': key, 'Content-Type': 'application/json' },
       timeout: 30_000,
     });
-    const results = (resp.data?.results || []).map(r => ({
-      url: r.url,
-      title: r.title,
-      snippet: r.text || r.snippet || '',
-      score: r.score,
-      publishedDate: r.publishedDate,
-      source: 'exa',
-    }));
+    const results = (resp.data?.results || []).map(r => {
+      // Lead the snippet with the query-focused highlights, then the page text.
+      const hl = Array.isArray(r.highlights) ? r.highlights.join(' … ') : '';
+      const snippet = [hl, r.text || r.snippet || ''].filter(Boolean).join('\n\n');
+      return {
+        url: r.url,
+        title: r.title,
+        snippet,
+        score: r.score,
+        publishedDate: r.publishedDate,
+        source: 'exa',
+      };
+    });
     return { provider: 'exa', results };
   } catch (e) {
     return { provider: 'exa', error: e.response?.data?.message || e.message, results: [] };

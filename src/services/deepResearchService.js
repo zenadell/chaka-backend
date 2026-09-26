@@ -88,6 +88,118 @@ async function callLlm(systemPrompt, userPrompt, opts = {}) {
   throw new Error(`All LLM providers failed for research call: ${lastErr?.message}`);
 }
 
+// ── Claude (Anthropic) — preferred brain for the high-value reasoning steps ──
+// Research quality hinges on two calls: PLANNING (what sub-queries to fire) and
+// SYNTHESIS (assembling the answer + person/identity disambiguation). Those run
+// on Claude when an Anthropic key is present — the fast open models above remain
+// the fallback and still handle the cheap bulk steps (ranking, per-page facts).
+//
+// Sonnet 4.6 is the default: frontier-grade reasoning, fast, far cheaper than
+// Opus. Override with CLAUDE_RESEARCH_MODEL if desired.
+
+const CLAUDE_RESEARCH_MODEL = process.env.CLAUDE_RESEARCH_MODEL || 'claude-sonnet-4-6';
+
+function _resolveAnthropicKey() {
+  try {
+    const adminKey = apiKeyManager.pickKey?.('anthropic')?.key
+                  || apiKeyManager.pickKey?.('claude')?.key;
+    if (adminKey) return adminKey;
+  } catch {}
+  return (process.env.ANTHROPIC_API_KEY || '').trim() || null;
+}
+
+let _anthropic = null;
+let _anthropicKey = null;
+function _getAnthropic() {
+  const key = _resolveAnthropicKey();
+  if (!key) return null;
+  if (!_anthropic || _anthropicKey !== key) {
+    const Anthropic = require('@anthropic-ai/sdk');
+    _anthropic = new Anthropic({ apiKey: key });
+    _anthropicKey = key;
+  }
+  return _anthropic;
+}
+
+async function callClaude(systemPrompt, userPrompt, opts = {}) {
+  const client = _getAnthropic();
+  if (!client) throw new Error('no anthropic key');
+  const model = opts.model || CLAUDE_RESEARCH_MODEL;
+  // Note: Claude has no OpenAI-style response_format=json. We don't need it —
+  // the prompts already demand strict JSON and safeJsonExtract handles parsing.
+  const resp = await client.messages.create({
+    model,
+    max_tokens:  opts.maxTokens   ?? 2048,
+    temperature: opts.temperature ?? 0.3,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+  const content = (resp.content || [])
+    .filter(b => b.type === 'text')
+    .map(b => b.text)
+    .join('');
+  return { provider: `anthropic:${model}`, content };
+}
+
+// ── DeepSeek — the ACTIVE research brain ────────────────────────────────────
+// OpenAI-compatible, strong reasoning at low cost. The key already lives in the
+// admin pool under type 'deepseek'. deepseek-v4-flash by default; override with
+// DEEPSEEK_MODEL (e.g. 'deepseek-v4-pro' for harder runs).
+
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash';
+
+function _resolveDeepSeekKey() {
+  try {
+    const k = apiKeyManager.pickKey?.('deepseek')?.key;
+    if (k) return k;
+  } catch {}
+  return (process.env.DEEPSEEK_API_KEY || '').trim() || null;
+}
+
+async function callDeepSeek(systemPrompt, userPrompt, opts = {}) {
+  const key = _resolveDeepSeekKey();
+  if (!key) throw new Error('no deepseek key');
+  const model = opts.model || DEEPSEEK_MODEL;
+  const resp = await axios.post('https://api.deepseek.com/v1/chat/completions', {
+    model,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user',   content: userPrompt },
+    ],
+    temperature: opts.temperature ?? 0.3,
+    max_tokens:  opts.maxTokens   ?? 2048,
+    ...(opts.responseFormat === 'json' ? { response_format: { type: 'json_object' } } : {}),
+  }, {
+    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+    timeout: 60_000,
+  });
+  const content = resp.data.choices?.[0]?.message?.content || '';
+  return { provider: `deepseek:${model}`, content };
+}
+
+// Brain selector for the high-value steps (planning + synthesis). Priority:
+//   1. DeepSeek  — active brain (user's choice; key in admin)
+//   2. Claude    — dormant; auto-activates the day an Anthropic key is added
+//   3. callLlm   — open providers (cerebras/sambanova/groq/openrouter) fallback
+// Each tier falls through on ANY failure (no key, rate-limit, network).
+async function callSmart(systemPrompt, userPrompt, opts = {}) {
+  if (_resolveDeepSeekKey()) {
+    try {
+      return await callDeepSeek(systemPrompt, userPrompt, opts);
+    } catch (e) {
+      console.warn(`[research] DeepSeek failed (${(e.message || '').slice(0, 100)}) → trying Claude/open`);
+    }
+  }
+  if (_resolveAnthropicKey()) {
+    try {
+      return await callClaude(systemPrompt, userPrompt, opts);
+    } catch (e) {
+      console.warn(`[research] Claude call failed (${(e.message || '').slice(0, 100)}) → falling back to open providers`);
+    }
+  }
+  return callLlm(systemPrompt, userPrompt, opts);
+}
+
 // Robust JSON extraction (LLMs occasionally wrap in markdown / prose)
 function safeJsonExtract(text, fallback = null) {
   try { return JSON.parse(text); } catch {}
@@ -144,7 +256,7 @@ If NO user context is present, just do the standard generic queries (literal que
 Return ONLY a JSON object: {"queries": ["q1", "q2", ...]}. No prose, no markdown fence, no explanation. 5-8 queries.`;
 
   const user = `User's research query: "${query}"\n\nGenerate the JSON now. Apply the CROSS-REFERENCE RULES above if context is present.`;
-  const { content, provider } = await callLlm(system, user, { responseFormat: 'json', temperature: 0.4, maxTokens: 1024 });
+  const { content, provider } = await callSmart(system, user, { responseFormat: 'json', temperature: 0.4, maxTokens: 1024 });
 
   const parsed = safeJsonExtract(content, { queries: [query] });
   const queries = (parsed.queries || [query]).slice(0, 8).map(q => String(q).trim()).filter(Boolean);
@@ -467,7 +579,7 @@ GENERAL RULES:
 
   const user = `Research query: "${originalQuery}"\n\nPRE-EXTRACTED LEARNINGS (atomic facts from individual sources):\n${numberedLearnings || '(none — rely on raw source content)'}\n\nNUMBERED SOURCES:\n\n${contextBlocks}\n\nWrite the report now. Every factual claim must end with [N] citations.`;
 
-  const { content, provider } = await callLlm(system, user, { temperature: 0.3, maxTokens: 4000 });
+  const { content, provider } = await callSmart(system, user, { temperature: 0.3, maxTokens: 4000 });
 
   return {
     report: content,
